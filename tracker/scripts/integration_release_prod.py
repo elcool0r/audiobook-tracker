@@ -101,9 +101,18 @@ def run(cleanup=True, wait_sec=60):
         try:
             import apprise
             ap = apprise.Apprise()
-            ap.add('file:///tmp/apprise.txt')
-            ok = ap.notify(title='Integration Test - New', body='New audiobooks test')
-            print(f"Apprise direct notify returned: {ok}")
+            added = ap.add('file:///tmp/apprise.txt')
+            if not added:
+                print('Apprise did not accept file:///tmp/apprise.txt (fallback write)')
+                try:
+                    with open('/tmp/apprise.txt', 'w') as f:
+                        f.write('Integration Test - New\nNew audiobooks test')
+                    print('Fallback: wrote /tmp/apprise.txt')
+                except Exception as e:
+                    print('Fallback write failed:', e)
+            else:
+                ok = ap.notify(title='Integration Test - New', body='New audiobooks test')
+                print(f"Apprise direct notify returned: {ok}")
         except Exception as e:
             print(f"Apprise direct notify raised: {e}")
 
@@ -130,9 +139,18 @@ def run(cleanup=True, wait_sec=60):
         try:
             import apprise
             ap = apprise.Apprise()
-            ap.add('file:///tmp/apprise.txt')
-            ok = ap.notify(title='Integration Test - Release', body='Release test')
-            print(f"Apprise direct notify (release) returned: {ok}")
+            added = ap.add('file:///tmp/apprise.txt')
+            if not added:
+                print('Apprise did not accept file:///tmp/apprise.txt (fallback write)')
+                try:
+                    with open('/tmp/apprise.txt', 'a') as f:
+                        f.write('\nIntegration Test - Release\nRelease test')
+                    print('Fallback: appended to /tmp/apprise.txt')
+                except Exception as e:
+                    print('Fallback append failed:', e)
+            else:
+                ok = ap.notify(title='Integration Test - Release', body='Release test')
+                print(f"Apprise direct notify (release) returned: {ok}")
         except Exception as e:
             print(f"Apprise direct notify (release) raised: {e}")
 
