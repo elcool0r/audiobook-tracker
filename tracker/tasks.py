@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from queue import SimpleQueue, Empty
 from typing import Dict, Any
 
@@ -28,6 +28,8 @@ class TaskWorker:
         self._thread: threading.Thread | None = None
         self._scheduler_thread: threading.Thread | None = None
         self._scheduler_interval_sec: int = 60
+        self._release_notifier_thread: threading.Thread | None = None
+        self._release_check_interval_sec: int = 300
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -41,6 +43,10 @@ class TaskWorker:
             if not self._scheduler_thread or not self._scheduler_thread.is_alive():
                 self._scheduler_thread = threading.Thread(target=self._scheduler_run, daemon=True)
                 self._scheduler_thread.start()
+        # Start release notifier thread (independent of refresh cadence)
+        if not self._release_notifier_thread or not self._release_notifier_thread.is_alive():
+            self._release_notifier_thread = threading.Thread(target=self._release_notifier_run, daemon=True)
+            self._release_notifier_thread.start()
 
     def stop(self):
         self._stop.set()
@@ -48,6 +54,8 @@ class TaskWorker:
             self._thread.join(timeout=2)
         if self._scheduler_thread:
             self._scheduler_thread.join(timeout=2)
+        if self._release_notifier_thread:
+            self._release_notifier_thread.join(timeout=2)
 
     def ensure_scheduler_running(self, rebalance: bool = False):
         """Start the auto-refresh scheduler thread if enabled and not already running.
@@ -364,14 +372,157 @@ class TaskWorker:
                     break
                 time.sleep(1)
 
+    def _release_notifier_run(self):
+        """Periodic loop to send release notifications at the exact publication time, independent of refresh cadence."""
+        import time
+        while not self._stop.is_set():
+            try:
+                self._check_due_release_notifications()
+            except Exception:
+                pass
+            for _ in range(self._release_check_interval_sec):
+                if self._stop.is_set():
+                    break
+                time.sleep(1)
+
     def _finish_job(self, job_id: str, result: Dict[str, Any]):
         col = get_jobs_collection()
         col.update_one({"_id": ObjectId(job_id)}, {"$set": {"status": "done", "result": result, "finished_at": _now_iso()}}, upsert=True)
 
+    def _record_release_job(self, *, username: str | None, asin: str | None, series_title: str, pending_asins: list[str], body: str, success: bool, error: str | None):
+        now = _now_iso()
+        result: Dict[str, Any] = {
+            "notified_asins": list(pending_asins) if pending_asins else [],
+            "body": body,
+        }
+        if error:
+            result["error"] = error
+        job_doc: Dict[str, Any] = {
+            "type": "release_notification",
+            "username": username,
+            "asin": asin,
+            "title": f"Release notifications for {series_title}",
+            "status": "done" if success else "error",
+            "result": result,
+            "created_at": now,
+            "started_at": now,
+            "finished_at": now,
+        }
+        try:
+            get_jobs_collection().insert_one(job_doc)
+        except Exception:
+            pass
+
+    def _check_due_release_notifications(self):
+        """Send release notifications when publication time has passed, without waiting for a series refresh."""
+        lib_col = get_user_library_collection()
+        users_col = get_users_collection()
+        series_col = get_series_collection()
+        now = _now_dt()
+
+        user_cache: Dict[str, Dict[str, Any]] = {}
+        series_cache: Dict[str, Dict[str, Any]] = {}
+
+        entries = list(lib_col.find({"series_asin": {"$exists": True, "$ne": None}}))
+        if not entries:
+            return
+
+        def _get_user(username: str) -> Dict[str, Any]:
+            if username not in user_cache:
+                user_cache[username] = users_col.find_one({"username": username}) or {}
+            return user_cache.get(username) or {}
+
+        def _get_series(asin: str) -> Dict[str, Any]:
+            if asin not in series_cache:
+                series_cache[asin] = series_col.find_one({"_id": asin}) or {}
+            return series_cache.get(asin) or {}
+
+        for entry in entries:
+            username = entry.get("username")
+            asin = entry.get("series_asin")
+            if not username or not asin:
+                continue
+            user_doc = _get_user(username)
+            notif = user_doc.get("notifications", {}) if isinstance(user_doc, dict) else {}
+            enabled = bool(notif.get("enabled", False))
+            notify_rel = bool(notif.get("notify_release", False))
+            urls = [u for u in notif.get("urls", []) if isinstance(u, str) and u.strip()]
+            if not (enabled and notify_rel and urls):
+                continue
+
+            series_doc = _get_series(asin)
+            books = series_doc.get("books") if isinstance(series_doc, dict) else None
+            if not books:
+                continue
+
+            release_candidates = []
+            now_date = now.date()
+            for b in books:
+                if not isinstance(b, dict):
+                    continue
+                b_asin = b.get("asin")
+                if not b_asin:
+                    continue
+                pub_dt = _publication_datetime_utc(b)
+                if not pub_dt:
+                    continue
+                if pub_dt.date() != now_date:
+                    continue
+                delta_sec = (now - pub_dt).total_seconds()
+                if delta_sec < 0 or delta_sec > self._release_check_interval_sec:
+                    continue
+                release_candidates.append((b, pub_dt))
+
+            if not release_candidates:
+                continue
+
+            notified_releases = entry.get("notified_releases", []) if isinstance(entry.get("notified_releases"), list) else []
+            pending = [(b, dt) for b, dt in release_candidates if b.get("asin") not in notified_releases]
+            if not pending:
+                continue
+
+            def _fmt(dt_val: datetime):
+                try:
+                    return dt_val.replace(microsecond=0).isoformat() + "Z"
+                except Exception:
+                    return str(dt_val)
+
+            titles = [f"{b.get('title') or b.get('asin')} (release at {_fmt(dt)})" for b, dt in pending]
+            pending_asins = [b.get("asin") for b, _ in pending if b.get("asin")]
+            series_title = series_doc.get("title") or f"Series {asin}"
+            heading = "Audiobook releasing now" if len(pending) == 1 else "Audiobooks releasing now"
+            body = f"{heading} in '{series_title}':\n- " + "\n- ".join(titles)
+
+            send_error = None
+            try:
+                import apprise
+                ap = apprise.Apprise()
+                for u in urls:
+                    ap.add(u)
+                ap.notify(title="Audiobook Release", body=body)
+            except Exception as exc:
+                send_error = str(exc)
+            finally:
+                self._record_release_job(
+                    username=username,
+                    asin=asin,
+                    series_title=series_title,
+                    pending_asins=list(pending_asins),
+                    body=body,
+                    success=send_error is None,
+                    error=send_error,
+                )
+
+            if pending_asins:
+                try:
+                    lib_col.update_one({"_id": entry.get("_id")}, {"$addToSet": {"notified_releases": {"$each": pending_asins}}})
+                except Exception:
+                    pass
+
     def _send_series_notifications(self, asin: str, series_doc: Dict[str, Any], old_books: list, books_current: list):
         """Notify users tracking this series about new audiobooks and releases based on their settings.
         - New audiobook: when current books contain ASINs not in old_books.
-        - Release: when a book's release_date is today/past and user hasn't been notified for that ASIN.
+        - Release: when a book's publication_datetime (or release_date fallback) is at/past now (UTC) and user hasn't been notified for that ASIN.
         """
         def _get(book, key):
             return book.get(key) if isinstance(book, dict) else getattr(book, key, None)
@@ -392,27 +543,17 @@ class TaskWorker:
             if asin_val:
                 book_map[asin_val] = b
 
-        # Release candidates: release_date <= today
-        from datetime import date
-        today = date.today()
+        # Release candidates: publication_datetime (exact UTC) or release_date fallback
+        now = _now_dt()
 
-        def parse_date(s):
-            try:
-                if not s or not isinstance(s, str):
-                    return None
-                # Expect YYYY-MM-DD or similar; take first 10 chars
-                ds = s[:10]
-                y, m, d = ds.split("-")
-                return date(int(y), int(m), int(d))
-            except Exception:
-                return None
-
-        release_candidates = []
+        release_candidates = []  # list of tuples (book, publication_dt_naive_utc)
         for b in (books_current or []):
-            rd = parse_date(_get(b, "release_date"))
             asin_val = _get(b, "asin")
-            if rd and rd == today and asin_val:
-                release_candidates.append(b)
+            if not asin_val:
+                continue
+            pub_dt = _publication_datetime_utc(b)
+            if pub_dt and pub_dt <= now:
+                release_candidates.append((b, pub_dt))
 
         # Find all users tracking this series
         lib_col = get_user_library_collection()
@@ -448,15 +589,29 @@ class TaskWorker:
             # Release notifications on the configured release day
             if notify_rel and release_candidates:
                 notified_releases = entry.get("notified_releases", []) if isinstance(entry.get("notified_releases"), list) else []
-                pending = [b for b in release_candidates if b.get("asin") not in notified_releases]
+                pending = [(b, dt) for b, dt in release_candidates if _get(b, "asin") not in notified_releases]
+
+                def _fmt(dt_val: datetime):
+                    try:
+                        return dt_val.replace(microsecond=0).isoformat() + "Z"
+                    except Exception:
+                        return str(dt_val)
+
                 if pending:
-                    titles = [f"{b.get('title') or b.get('asin')} (release date {b.get('release_date')})" for b in pending]
-                    body = f"Audiobooks releasing today in '{series_title}':\n- " + "\n- ".join(titles)
-                    to_send_msgs.append(("Audiobook Release", body, [b.get("asin") for b in pending if b.get("asin")]))
+                    titles = [
+                        f"{b.get('title') or _get(b, 'asin')} (release at {_fmt(dt)})"
+                        for b, dt in pending
+                    ]
+                    pending_asins = [_get(b, "asin") for b, _ in pending if _get(b, "asin")]
+                    heading = "Audiobook releasing now" if len(pending) == 1 else "Audiobooks releasing now"
+                    body = f"{heading} in '{series_title}':\n- " + "\n- ".join(titles)
+                    to_send_msgs.append(("Audiobook Release", body, pending_asins))
 
             if not to_send_msgs:
                 continue
 
+            release_msg = next((msg for msg in to_send_msgs if msg[0] == "Audiobook Release"), None)
+            apprise_error = None
             # Send via Apprise
             try:
                 import apprise
@@ -467,9 +622,20 @@ class TaskWorker:
                 for msg in to_send_msgs:
                     title, body = msg[0], msg[1]
                     ap.notify(title=title, body=body)
-            except Exception:
-                # don't block if apprise fails
-                pass
+            except Exception as exc:
+                apprise_error = str(exc)
+            finally:
+                if release_msg:
+                    pending_asins_for_job = release_msg[2] if len(release_msg) > 2 else []
+                    self._record_release_job(
+                        username=username,
+                        asin=asin,
+                        series_title=series_title,
+                        pending_asins=list(pending_asins_for_job),
+                        body=release_msg[1],
+                        success=apprise_error is None,
+                        error=apprise_error,
+                    )
 
             # Update per-user notification state: releases
             if notify_new and new_asins:
@@ -485,12 +651,15 @@ class TaskWorker:
                     pass
 
             if notify_rel and release_candidates:
-                to_mark = [b.get("asin") for b in release_candidates if b.get("asin")]
-                if to_mark:
-                    try:
-                        lib_col.update_one({"_id": entry.get("_id")}, {"$addToSet": {"notified_releases": {"$each": to_mark}}})
-                    except Exception:
-                        pass
+                try:
+                    to_mark_rel = []
+                    for msg in to_send_msgs:
+                        if msg[0] == "Audiobook Release" and len(msg) > 2:
+                            to_mark_rel.extend(msg[2])
+                    if to_mark_rel:
+                        lib_col.update_one({"_id": entry.get("_id")}, {"$addToSet": {"notified_releases": {"$each": to_mark_rel}}})
+                except Exception:
+                    pass
 
 
 worker = TaskWorker()
@@ -516,6 +685,34 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
         return datetime.fromisoformat(text)
     except Exception:
         return None
+
+
+def _publication_datetime_utc(book: Any) -> datetime | None:
+    """Return publication datetime as naive UTC. Falls back to release_date at 00:00 UTC."""
+    def _val(key: str):
+        if isinstance(book, dict):
+            return book.get(key)
+        return getattr(book, key, None) if hasattr(book, key) else None
+
+    raw_pub = _val("publication_datetime")
+    pub_dt = _parse_iso_datetime(raw_pub) if raw_pub else None
+    if pub_dt:
+        try:
+            if pub_dt.tzinfo:
+                pub_dt = pub_dt.astimezone(timezone.utc).replace(tzinfo=None)
+        except Exception:
+            pass
+        return pub_dt
+    # Fallback to release_date at midnight UTC
+    try:
+        rd = _val("release_date")
+        if rd and isinstance(rd, str):
+            ds = rd[:10]
+            y, m, d = ds.split("-")
+            return datetime(int(y), int(m), int(d))
+    except Exception:
+        return None
+    return None
 
 
 def _rebalance_auto_refresh(reference: datetime | None = None):
