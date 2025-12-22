@@ -27,7 +27,8 @@ class TestReleaseFlow:
         then simulate 1 minute later and verify release notification is sent. Clean up files afterwards."""
         base_dir = _get_base_dir()
 
-        now = datetime.utcnow().replace(tzinfo=None)
+        # Use timezone-aware UTC datetimes
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         pub_dt = (now + timedelta(seconds=60)).replace(microsecond=0)
         pub_iso = pub_dt.isoformat() + "Z"
 
@@ -64,7 +65,7 @@ class TestReleaseFlow:
             "title": test_series_title,
             "url": "https://www.audible.com/series/Flow-Test",
             "books": initial_books,
-            "fetched_at": datetime.utcnow(timezone.utc).isoformat() + "Z"
+            "fetched_at": datetime.now(timezone.utc).isoformat() + "Z"
         }
 
         series_doc_with_new = dict(initial_series_doc)
