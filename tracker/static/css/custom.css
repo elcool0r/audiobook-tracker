@@ -158,22 +158,20 @@ html[data-bs-theme="dark"],
 	position: relative;
 	z-index: 1;
 }
-/* Hover / keyboard focus preview (desktop only) - larger overlay and in front */
+/* Hover / keyboard focus preview (desktop only) - use Bootstrap tooltip preview instead of custom overlay */
 .all-series-table td.series-cover-cell:hover,
 .all-series-table td.series-cover-cell:focus-within {
-	z-index: 10000; /* bring the entire cell above siblings */
+	z-index: 1;
 }
 .all-series-table td.series-cover-cell:hover img,
 .all-series-table td.series-cover-cell:focus-within img {
-	position: absolute;
-	left: 0;
-	top: 50%;
-	transform: translateY(-50%) scale(3.6);
-	box-shadow: 0 14px 40px rgba(0,0,0,0.6);
-	z-index: 10001;
-	pointer-events: none; /* allow clicks to pass through to links/buttons underneath */
+	/* No custom scaling here — tooltips provide the preview */
+	transform: none;
+	box-shadow: none;
+	position: relative;
+	z-index: 1;
 }
-/* Don't apply the hover zoom on small screens (touch devices) */
+/* Don't apply any hover behavior on small screens (touch devices) */
 @media (max-width: 575.98px) {
 	.all-series-table td.series-cover-cell img,
 	.all-series-table td.series-cover-cell:hover img,

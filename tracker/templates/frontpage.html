@@ -100,7 +100,7 @@
               <tr data-series="{{ s.title or '' }}" data-books="{{ s.book_count or 0 }}" data-last-release="{{ s.last_release_ts or '' }}" data-next-release="{{ s.next_release_ts or '' }}" data-duration="{{ s.duration_minutes or 0 }}">
                 <td class="text-start series-cover-cell">
                   {% if s.cover %}
-                  <img src="{{ s.cover }}" alt="Cover" style="height:40px;width:auto;border:none;outline:none;"/>
+                  <img src="{{ s.cover }}" alt="Cover" style="height:40px;width:auto;border:none;outline:none;" data-bs-toggle="tooltip" data-bs-placement="right" data-bs-html="true" data-bs-custom-class="cover-tooltip" title='<img src="{{ s.cover }}" style="width:180px;height:auto;" />' />
                   {% endif %}
                 </td>
                   <td class="series-col" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
@@ -145,6 +145,13 @@
         return Number.isFinite(parsed) ? parsed : -Infinity;
       },    };
     let sortState = { key: null, dir: 1 };
+
+    // Initialize bootstrap tooltips for cover previews (match series-admin behavior)
+    try {
+      const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+      tooltipTriggerList.forEach(function (tooltipTriggerEl) { new bootstrap.Tooltip(tooltipTriggerEl); });
+    } catch (e) { /* bootstrap might not be loaded yet; ignore */ }
+
     headers.forEach(th => {
       th.addEventListener('click', () => {
         const key = th.dataset.sortKey;
