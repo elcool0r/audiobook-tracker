@@ -157,12 +157,15 @@ def create_app() -> FastAPI:
                 if dt and (not last_refresh_dt or dt > last_refresh_dt):
                     last_refresh_dt = dt
             series_last_release = None
+            series_next_release = None
             for b in visible:
                 rd = _parse_date(getattr(b, "release_date", None))
                 if not rd:
                     continue
                 if rd <= now and (not series_last_release or rd > series_last_release):
                     series_last_release = rd
+                if rd > now and (not series_next_release or rd < series_next_release):
+                    series_next_release = rd
                 book_url = getattr(b, "url", None)
                 if not book_url and getattr(b, "asin", None):
                     book_url = f"https://www.audible.com/pd/{getattr(b, 'asin', '')}"
@@ -223,6 +226,8 @@ def create_app() -> FastAPI:
                         break
             last_release_str = _format_d(series_last_release)
             last_release_ts = series_last_release.isoformat() if series_last_release else None
+            next_release_str = _format_d(series_next_release)
+            next_release_ts = series_next_release.isoformat() if series_next_release else None
             series_rows.append({
                 "title": it.title,
                 "asin": it.asin,
@@ -232,6 +237,8 @@ def create_app() -> FastAPI:
                 "cover": cover,
                 "last_release": last_release_str,
                 "last_release_ts": last_release_ts,
+                "next_release": next_release_str,
+                "next_release_ts": next_release_ts,
                 "duration_minutes": runtime_mins,
                 "url": it.url,
             })
@@ -423,12 +430,15 @@ def create_app() -> FastAPI:
                 if dt and (not last_refresh_dt or dt > last_refresh_dt):
                     last_refresh_dt = dt
             series_last_release = None
+            series_next_release = None
             for b in visible:
                 rd = _parse_date(getattr(b, "release_date", None))
                 if not rd:
                     continue
                 if rd <= now and (not series_last_release or rd > series_last_release):
                     series_last_release = rd
+                if rd > now and (not series_next_release or rd < series_next_release):
+                    series_next_release = rd
                 book_url = getattr(b, "url", None)
                 if not book_url and getattr(b, "asin", None):
                     book_url = f"https://www.audible.com/pd/{getattr(b, 'asin', '')}"
@@ -489,6 +499,8 @@ def create_app() -> FastAPI:
                         break
             last_release_str = _format_d(series_last_release)
             last_release_ts = series_last_release.isoformat() if series_last_release else None
+            next_release_str = _format_d(series_next_release)
+            next_release_ts = series_next_release.isoformat() if series_next_release else None
             series_rows.append({
                 "title": it.title,
                 "asin": it.asin,
@@ -498,6 +510,8 @@ def create_app() -> FastAPI:
                 "cover": cover,
                 "last_release": last_release_str,
                 "last_release_ts": last_release_ts,
+                "next_release": next_release_str,
+                "next_release_ts": next_release_ts,
                 "duration_minutes": runtime_mins,
                 "url": it.url,
             })

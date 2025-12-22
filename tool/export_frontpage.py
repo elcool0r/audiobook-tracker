@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """
-Export the public frontpage as a standalone static HTML file suitable for GitHub Pages.
+Deprecated: export_frontpage removed.
 
-Usage:
-  MONGO_URI=mongodb://localhost:27017 MONGO_DB=audiobook_tracker \
-  python tool/export_frontpage.py --slug <frontpage-slug-or-username> --out docs/index.html
-
-Notes:
-- Uses tracker/templates/frontpage_export.html (self-contained CSS, no external assets required)
-- Reads data from MongoDB using the same logic as the app's frontpage
-- If --out is a directory, writes index.html inside it
+The `export_frontpage` tool has been removed from this repository.
+If you relied on static frontpage exports, please use the application's public frontpage endpoints or open an issue to discuss replacement tooling.
 """
-from __future__ import annotations
+import sys
+
+if __name__ == "__main__":
+    print("The export_frontpage tool has been removed from this repository.", file=sys.stderr)
+    raise SystemExit(1)
 
 import argparse
 import os

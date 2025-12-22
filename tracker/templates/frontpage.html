@@ -86,17 +86,18 @@
           <table class="table table-striped align-middle all-series-table mb-0">
             <thead>
               <tr>
-                <th scope="col" style="min-width: 60px;">Cover</th>
-                <th scope="col" data-sort-key="series" class="sortable-col" style="min-width: 180px;">Series</th>
+                <th scope="col" style="width:1%; white-space:nowrap;">Cover</th>
+                <th scope="col" data-sort-key="series" class="sortable-col" style="width:auto; white-space:nowrap;">Series</th>
                 <th scope="col" class="d-none d-md-table-cell narrators-head" style="min-width: 280px;">Narrators</th>
                 <th scope="col" data-sort-key="books" class="sortable-col text-end" style="min-width: 50px;">Books</th>
                 <th scope="col" data-sort-key="lastRelease" class="sortable-col d-none d-md-table-cell text-end" style="min-width: 110px;">Last release</th>
+                <th scope="col" data-sort-key="nextRelease" class="sortable-col d-none d-md-table-cell text-end" style="min-width: 110px;">Next release</th>
                 <th scope="col" data-sort-key="duration" class="sortable-col text-end" style="min-width: 90px;">Duration</th>
               </tr>
             </thead>
             <tbody>
               {% for s in series %}
-              <tr data-series="{{ s.title or '' }}" data-books="{{ s.book_count or 0 }}" data-last-release="{{ s.last_release_ts or '' }}" data-duration="{{ s.duration_minutes or 0 }}">
+              <tr data-series="{{ s.title or '' }}" data-books="{{ s.book_count or 0 }}" data-last-release="{{ s.last_release_ts or '' }}" data-next-release="{{ s.next_release_ts or '' }}" data-duration="{{ s.duration_minutes or 0 }}">
                 <td class="text-start series-cover-cell">
                   {% if s.cover %}
                   <img src="{{ s.cover }}" alt="Cover" style="height:40px;width:auto;border:none;outline:none;"/>
@@ -112,6 +113,7 @@
                   <td class="narrators-col d-none d-md-table-cell" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ s.narrators }}">{{ s.narrators or "—" }}</td>
                   <td class="books-col text-end text-muted small pe-3">{{ s.book_count }}</td>
                   <td class="last-release-col text-end text-muted small pe-3 d-none d-md-table-cell">{{ s.last_release or "—" }}</td>
+                  <td class="next-release-col text-end text-muted small pe-3 d-none d-md-table-cell">{{ s.next_release or "—" }}</td>
                   <td class="duration-col text-end text-muted small pe-3">{{ s.runtime }}</td>
               </tr>
               {% endfor %}
@@ -137,8 +139,11 @@
         if (!row.dataset.lastRelease) return -Infinity;
         const parsed = Date.parse(row.dataset.lastRelease);
         return Number.isFinite(parsed) ? parsed : -Infinity;
-      },
-    };
+      },      nextRelease: row => {
+        if (!row.dataset.nextRelease) return -Infinity;
+        const parsed = Date.parse(row.dataset.nextRelease);
+        return Number.isFinite(parsed) ? parsed : -Infinity;
+      },    };
     let sortState = { key: null, dir: 1 };
     headers.forEach(th => {
       th.addEventListener('click', () => {

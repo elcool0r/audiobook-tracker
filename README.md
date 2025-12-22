@@ -9,7 +9,6 @@ Audiobook Tracker is a web application designed to help users track their favori
 - **Public Frontpages**: Shareable public pages showing your tracked series and upcoming releases
 - **Admin Interface**: Web-based admin panel for managing users, series, and jobs
 - **API Access**: RESTful API for programmatic interaction
-- **Static Export**: Export frontpages as standalone HTML files for hosting on GitHub Pages
 - **User Management**: Support for multiple users with customizable settings
 - **Date Formatting**: Configurable date formats (US, DE, ISO)
 - **Prometheus Metrics**: Built-in metrics for monitoring API usage and system performance
@@ -106,17 +105,6 @@ series_count 15
 user_count 3
 ```
 
-### Export Static Frontpage
-
-Export a user's frontpage as a standalone HTML file:
-
-```bash
-export MONGO_URI=mongodb://localhost:27017
-export MONGO_DB=audiobook_tracker
-python tool/export_frontpage.py --slug your-username --out docs/index.html
-```
-
-Then enable GitHub Pages to serve from the `docs/` folder.
 
 ## Configuration
 
@@ -138,8 +126,8 @@ Then enable GitHub Pages to serve from the `docs/` folder.
 - `tracker/`: FastAPI backend with Jinja2 templates
 - `tracker/static/`: CSS and static assets
 - `tracker/templates/`: HTML templates
-- `tool/`: Utility scripts for export and maintenance
-- `docs/`: Static export output directory
+- `tool/`: Utility scripts for maintenance
+- `docs/`: Static output directory
 
 ### Running in Development
 

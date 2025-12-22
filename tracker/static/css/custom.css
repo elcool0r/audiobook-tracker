@@ -137,7 +137,34 @@ html[data-bs-theme="dark"],
 	text-align: right;
 	padding-right: 1rem;
 }
-.all-series-table td.last-release-col {
+
+/* Reduce spacing between cover and series columns for tighter layout */
+.all-series-table td.series-cover-cell {
+	padding-right: 0.25rem;
+	width: auto;
+	white-space: nowrap;
+}
+/* Ensure cover image is constrained to the intended height but keeps aspect ratio */
+.all-series-table td.series-cover-cell img {
+	height: 40px;
+	width: auto;
+	display: block;
+}
+.all-series-table td.series-col {
+	padding-left: 0.25rem;
+	min-width: 0;
+	width: auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Upcoming column: next release */
+.all-series-table td.next-release-col {
+	white-space: nowrap;
+	text-align: right;
+	padding-right: 1.25rem;
+}.all-series-table td.last-release-col {
 	white-space: nowrap;
 	text-align: right;
 	padding-right: 1.25rem;
