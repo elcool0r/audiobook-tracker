@@ -425,7 +425,8 @@ def _clean_url(url: str | None) -> str | None:
 
 
 def _build_proxies(settings) -> Optional[Dict[str, str]]:
-    if not getattr(settings, "proxy_enabled", True):
+    # If proxy_enabled is not True, do not build proxies. Default is disabled.
+    if not getattr(settings, "proxy_enabled", False):
         return None
     if not settings.proxy_url:
         return None

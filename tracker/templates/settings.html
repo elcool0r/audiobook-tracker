@@ -154,11 +154,13 @@ async function loadSettings() {
     document.querySelector('[name=proxy_url]').value = currentSettings.proxy_url || '';
     document.querySelector('[name=proxy_username]').value = currentSettings.proxy_username || '';
     document.querySelector('[name=proxy_password]').value = currentSettings.proxy_password || '';
-    document.querySelector('[name=proxy_enabled]').checked = currentSettings.proxy_enabled !== false;
+    // proxy_enabled: default OFF unless explicitly true
+    document.querySelector('[name=proxy_enabled]').checked = !!currentSettings.proxy_enabled;
     document.querySelector('[name=auto_refresh_enabled]').checked = currentSettings.auto_refresh_enabled || false;
     document.querySelector('[name=manual_refresh_interval_minutes]').value = currentSettings.manual_refresh_interval_minutes || 10;
     document.querySelector('[name=allow_non_admin_series_search]').checked = currentSettings.allow_non_admin_series_search || false;
-    document.querySelector('[name=skip_known_series_search]').checked = currentSettings.skip_known_series_search || false;
+    // skip_known_series_search: default ON unless explicitly false
+    document.querySelector('[name=skip_known_series_search]').checked = currentSettings.skip_known_series_search !== false;
     syncProxyFields();
   }
 }
