@@ -499,9 +499,22 @@ class TaskWorker:
                 ap = apprise.Apprise()
                 for u in urls:
                     ap.add(u)
-                ap.notify(title="Audiobook Release", body=body)
-            except Exception as exc:
-                send_error = str(exc)
+                # Attempt to attach cover images for pending books when available
+                attaches = []
+                for b, _ in pending:
+                    img = None
+                    if isinstance(b, dict):
+                        img = b.get('image') or (isinstance(b.get('product_images'), dict) and next(iter(b.get('product_images').values())))
+                    if img:
+                        attaches.append(img)
+                try:
+                    if attaches:
+                        ap.notify(title="Audiobook Release", body=body, attach=attaches)
+                    else:
+                        ap.notify(title="Audiobook Release", body=body)
+                    send_error = None
+                except Exception as exc:
+                    send_error = str(exc)
             finally:
                 self._record_release_job(
                     username=username,
@@ -621,7 +634,19 @@ class TaskWorker:
                 # send each message
                 for msg in to_send_msgs:
                     title, body = msg[0], msg[1]
-                    ap.notify(title=title, body=body)
+                    asins = msg[2] if len(msg) > 2 else []
+                    attaches = []
+                    for a in asins:
+                        b = book_map.get(a)
+                        img = None
+                        if isinstance(b, dict):
+                            img = b.get('image') or (isinstance(b.get('product_images'), dict) and next(iter(b.get('product_images').values())))
+                        if img:
+                            attaches.append(img)
+                    if attaches:
+                        ap.notify(title=title, body=body, attach=attaches)
+                    else:
+                        ap.notify(title=title, body=body)
             except Exception as exc:
                 apprise_error = str(exc)
             finally:

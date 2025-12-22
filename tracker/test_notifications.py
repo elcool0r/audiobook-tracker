@@ -72,7 +72,8 @@ class TestNotifications:
             "authors": ["New Author"],
             "release_date": date.today().isoformat(),
             "narrators": ["New Narrator"],
-            "runtime": 360
+            "runtime": 360,
+            "image": "https://example.com/new_book_cover.jpg"
         }
         updated_books = initial_books + [new_book]
 
@@ -119,7 +120,8 @@ class TestNotifications:
             def mock_notify(**kwargs):
                 title = kwargs.get('title', '')
                 body = kwargs.get('body', '')
-                content = f"{title}\n\n{body}"
+                attach = kwargs.get('attach', None)
+                content = f"{title}\n\n{body}\n\nATTACH: {attach if attach else ''}"
                 with open(f"{base_dir}/test_notification.txt", 'w') as f:
                     f.write(content)
                 return True
@@ -156,6 +158,7 @@ class TestNotifications:
             assert "New Audiobook(s)" in file_content
             assert test_series_title in file_content
             assert "New Book in Test Series" in file_content
+            assert "https://example.com/new_book_cover.jpg" in file_content
 
             print("✓ Notification sent successfully!")
             print(f"Notification file created: {test_file}")
@@ -210,7 +213,8 @@ class TestNotifications:
             "title": "Releasing Today Book",
             "release_date": date.today().isoformat(),  # Today!
             "narrators": ["Test Narrator"],
-            "runtime": 240
+            "runtime": 240,
+            "image": "https://example.com/release_cover.jpg"
         }]
 
         # Mock series document
@@ -252,7 +256,8 @@ class TestNotifications:
             def mock_notify(**kwargs):
                 title = kwargs.get('title', '')
                 body = kwargs.get('body', '')
-                content = f"{title}\n\n{body}"
+                attach = kwargs.get('attach', None)
+                content = f"{title}\n\n{body}\n\nATTACH: {attach if attach else ''}"
                 with open(f"{base_dir}/test_release_notification.txt", 'w') as f:
                     f.write(content)
                 return True
@@ -289,6 +294,7 @@ class TestNotifications:
             assert test_series_title in file_content
             assert "Releasing Today Book" in file_content
             assert date.today().isoformat() in file_content
+            assert "https://example.com/release_cover.jpg" in file_content
 
             print("✓ Release notification sent successfully!")
             print(f"Notification file created: {test_file}")
