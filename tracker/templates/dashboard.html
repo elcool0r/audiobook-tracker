@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Dashboard</h1>
+<p>Welcome, {{ user.username }}.</p>
+<div class="row">
+  <div class="col-md-6">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Quick Search</h5>
+        <form id="searchForm">
+          <div class="mb-3">
+            <input class="form-control" name="title" placeholder="Search title..." />
+          </div>
+          <div class="mb-3">
+            <input class="form-control" name="num_results" placeholder="Num results (optional)" />
+          </div>
+          <button class="btn btn-primary">Search</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Settings</h5>
+        <pre id="settingsBox"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="results"></div>
+<script>
+async function fetchSettings() {
+  const r = await fetch(apiPath('/api/settings'));
+  if (r.ok) {
+    const j = await r.json();
+    document.getElementById('settingsBox').innerText = JSON.stringify(j, null, 2);
+  }
+}
+
+fetchSettings();
+
+document.getElementById('searchForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const form = ev.target;
+  const title = form.title.value;
+  const num = form.num_results.value ? parseInt(form.num_results.value,10) : undefined;
+  const r = await fetch(apiPath('/api/search'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({title: title, num_results: num})});
+  const j = await r.json();
+  document.getElementById('results').innerText = JSON.stringify(j, null, 2);
+});
+</script>
+{% endblock %}

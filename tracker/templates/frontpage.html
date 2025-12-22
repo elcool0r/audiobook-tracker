@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Frontpage{% endblock %}
+
+{% block content %}
+  <div class="row mb-4">
+    <div class="col">
+      <h3 class="mb-3 text-center">Upcoming Releases</h3>
+      {% if upcoming and upcoming|length > 0 %}
+        <div class="upcoming-scroll">
+          <div class="row row-cols-1 row-cols-sm-2 row-cols-md-4 g-3 {% if upcoming|length < 4 %}justify-content-center{% endif %}">
+        {% for b in upcoming %}
+        <div class="col">
+          <div class="card h-100">
+            <h6 class="text-center mb-1">{{ b.days_left }} days</h6>
+            {% if b.image %}
+            <img src="{{ b.image }}" class="card-img-top" alt="Cover"/>
+            {% endif %}
+            <div class="card-body">
+              <h5 class="card-title">{{ b.title }}</h5>
+              <div class="card-subtitle text-muted">{{ b.series }}</div>
+            <div class="mt-2"><strong>Release:</strong> {{ b.release_str }}</div>
+              {% if b.narrators %}
+              <div class="mt-2"><strong>Narrators:</strong> {{ b.narrators }}</div>
+              {% endif %}
+              {% if b.runtime_str %}
+              <div class="mt-2"><strong>Runtime:</strong> {{ b.runtime_str }}</div>
+              {% endif %}
+            </div>
+            <div class="card-footer bg-transparent border-top-0">
+              {% if b.url %}
+              <a href="{{ b.url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener noreferrer">View on Audible</a>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        </div>
+      </div>
+      {% else %}
+      <div class="text-center text-muted">No upcoming releases found.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="row mb-4">
+    <div class="col">
+      <h3 class="mb-3 text-center">Latest Releases</h3>
+      {% if latest and latest|length > 0 %}
+        <div class="latest-scroll">
+          <div class="row row-cols-1 row-cols-sm-2 row-cols-md-4 g-3 {% if latest|length < 4 %}justify-content-center{% endif %}">
+        {% for b in latest %}
+        <div class="col">
+          <div class="card h-100">
+            <h6 class="text-center mb-1">{% if b.days_ago == 0 %}today{% elif b.days_ago == 1 %}yesterday{% else %}{{ b.days_ago }} days ago{% endif %}</h6>
+            {% if b.image %}
+            <img src="{{ b.image }}" class="card-img-top" alt="Cover"/>
+            {% endif %}
+            <div class="card-body">
+              <h5 class="card-title">{{ b.title }}</h5>
+              <div class="card-subtitle text-muted">{{ b.series }}</div>
+              <div class="card-subtitle text-muted">Released: {{ b.release_str }}</div>
+              {% if b.runtime_str %}
+              <div class="mt-1"><strong>Runtime:</strong> {{ b.runtime_str }}</div>
+              {% endif %}
+            </div>
+            <div class="card-footer bg-transparent border-top-0">
+              {% if b.url %}
+              <a href="{{ b.url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener noreferrer">View on Audible</a>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        </div>
+      </div>
+      {% else %}
+      <div class="text-muted">No recent releases.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="row mb-4">
+    <div class="col">
+      <h3 class="mb-3">All Series ({{ stats.series_count }})</h3>
+        <div class="table-responsive all-series-table-wrapper">
+          <table class="table table-striped align-middle all-series-table mb-0">
+            <thead>
+              <tr>
+                <th scope="col" style="min-width: 60px;">Cover</th>
+                <th scope="col" data-sort-key="series" class="sortable-col" style="min-width: 180px;">Series</th>
+                <th scope="col" class="d-none d-md-table-cell narrators-head" style="min-width: 280px;">Narrators</th>
+                <th scope="col" data-sort-key="books" class="sortable-col text-end" style="min-width: 50px;">Books</th>
+                <th scope="col" data-sort-key="lastRelease" class="sortable-col d-none d-md-table-cell text-end" style="min-width: 110px;">Last release</th>
+                <th scope="col" data-sort-key="duration" class="sortable-col text-end" style="min-width: 90px;">Duration</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in series %}
+              <tr data-series="{{ s.title or '' }}" data-books="{{ s.book_count or 0 }}" data-last-release="{{ s.last_release_ts or '' }}" data-duration="{{ s.duration_minutes or 0 }}">
+                <td class="text-start series-cover-cell">
+                  {% if s.cover %}
+                  <img src="{{ s.cover }}" alt="Cover" style="height:40px;width:auto;border:none;outline:none;"/>
+                  {% endif %}
+                </td>
+                  <td class="series-col" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  {% if s.url %}
+                  <a href="{{ s.url }}" class="series-link d-inline-block text-decoration-none" title="{{ s.title }}">{{ s.title }}</a>
+                  {% else %}
+                  <span class="series-link d-inline-block" title="{{ s.title }}">{{ s.title }}</span>
+                  {% endif %}
+                </td>
+                  <td class="narrators-col d-none d-md-table-cell" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ s.narrators }}">{{ s.narrators or "—" }}</td>
+                  <td class="books-col text-end text-muted small pe-3">{{ s.book_count }}</td>
+                  <td class="last-release-col text-end text-muted small pe-3 d-none d-md-table-cell">{{ s.last_release or "—" }}</td>
+                  <td class="duration-col text-end text-muted small pe-3">{{ s.runtime }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="table-scroll-hint small text-muted text-center d-md-none mt-2">Swipe sideways to see all columns.</div>
+    </div>
+  </div>
+  <script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const table = document.querySelector('.all-series-table');
+    if (!table) return;
+    const tbody = table.tBodies[0];
+    if (!tbody) return;
+    const headers = table.querySelectorAll('th[data-sort-key]');
+    if (!headers.length) return;
+    const valueGetters = {
+      series: row => (row.dataset.series || '').toString().toLowerCase(),
+      books: row => Number(row.dataset.books) || 0,
+      duration: row => Number(row.dataset.duration) || 0,
+      lastRelease: row => {
+        if (!row.dataset.lastRelease) return -Infinity;
+        const parsed = Date.parse(row.dataset.lastRelease);
+        return Number.isFinite(parsed) ? parsed : -Infinity;
+      },
+    };
+    let sortState = { key: null, dir: 1 };
+    headers.forEach(th => {
+      th.addEventListener('click', () => {
+        const key = th.dataset.sortKey;
+        if (!key || !valueGetters[key]) return;
+        const dir = sortState.key === key ? -sortState.dir : 1;
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        rows.sort((a, b) => {
+          const aVal = valueGetters[key](a);
+          const bVal = valueGetters[key](b);
+          if (aVal === bVal) return 0;
+          return (aVal > bVal ? 1 : -1) * dir;
+        });
+        rows.forEach(row => tbody.appendChild(row));
+        sortState = { key, dir };
+        headers.forEach(h => h.removeAttribute('data-sort-dir'));
+        th.setAttribute('data-sort-dir', dir === 1 ? 'asc' : 'desc');
+      });
+    });
+  });
+  </script>
+{% endblock %}

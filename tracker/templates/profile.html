@@ -1,0 +1,509 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>My Profile</h1>
+<div class="row">
+  <div class="col-md-6">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Account</h5>
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Username</dt><dd class="col-sm-8" id="p-username"></dd>
+          <dt class="col-sm-4">Role</dt><dd class="col-sm-8" id="p-role"></dd>
+          <dt class="col-sm-4">Library items</dt><dd class="col-sm-8" id="p-libcount"></dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Change Password</h5>
+        <form id="pwdForm">
+          <div class="mb-2"><input class="form-control" type="password" name="current" placeholder="Current password" required></div>
+          <div class="mb-2"><input class="form-control" type="password" name="new" placeholder="New password" required></div>
+          <button class="btn btn-primary">Update Password</button>
+        </form>
+        <div class="alert alert-success mt-2" id="pwdOk" style="display:none;">Password updated</div>
+        <div class="alert alert-danger mt-2" id="pwdErr" style="display:none;"></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Preferences</h5>
+        <div class="mb-2">
+          <label class="form-label">Date format</label>
+          <select class="form-select" id="dateFormat">
+            <option value="iso">ISO (YYYY-MM-DD)</option>
+            <option value="de">Deutsch (DD.MM.YYYY)</option>
+            <option value="us">US (MM/DD/YYYY)</option>
+          </select>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Frontpage slug</label>
+          <div class="input-group input-group-sm">
+            <span class="input-group-text">/home/</span>
+            <input class="form-control" id="frontpageSlug" placeholder="your-name" />
+          </div>
+          <div class="form-text">Letters, numbers, hyphen, underscore. Must be unique. The frontpage is served at /home/&lt;slug&gt;.</div>
+          <div class="mt-2">
+            <a id="frontpageLink" class="btn btn-sm btn-outline-primary" href="#" target="_blank">Open frontpage</a>
+          </div>
+        </div>
+        <button class="btn btn-sm btn-primary" id="savePrefs">Save Preferences</button>
+        <div class="alert alert-success mt-2" id="prefOk" style="display:none;">Preferences saved</div>
+        <div class="alert alert-danger mt-2" id="prefErr" style="display:none;"></div>
+      </div>
+    </div>
+    <!-- API Keys feature hidden for now -->
+  </div>  <!-- Audiobookshelf Import feature hidden for now -->
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Notifications</h5>
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" id="notifyEnabled" aria-checked="false">
+          <label class="form-check-label" for="notifyEnabled">Enable Notifications</label>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Apprise URLs</label>
+          <textarea class="form-control" id="notifyUrls" rows="4" placeholder="discord://token/...&#10;telegram://bot_token/chat_id&#10;email://user@example.com"></textarea>
+          <small class="text-muted d-block mt-1">One URL per line. <a href="https://github.com/caronc/apprise/wiki" target="_blank">Apprise formats</a></small>
+        </div>
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" id="notifyNewFound" aria-checked="false">
+          <label class="form-check-label" for="notifyNewFound">Notify when a new audiobook is found</label>
+        </div>
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" id="notifyRelease" aria-checked="false">
+          <label class="form-check-label" for="notifyRelease">Notify when an audiobook is released</label>
+        </div>
+        <button class="btn btn-sm btn-primary" id="notifySaveBtn">Save Settings</button>
+        <button class="btn btn-sm btn-outline-secondary" id="notifyTestBtn">Send Test</button>
+        <div class="alert alert-success mt-2" id="notifyOk" style="display:none;">Settings saved</div>
+        <div class="alert alert-danger mt-2" id="notifyErr" style="display:none;"></div>
+      </div>
+    </div>
+  </div></div>
+<script>
+async function loadProfile() {
+  const r = await fetch(apiPath('/api/profile'));
+  if (!r.ok) return;
+  const p = await r.json();
+  document.getElementById('p-username').textContent = p.username;
+  document.getElementById('p-role').textContent = p.role;
+  document.getElementById('p-libcount').textContent = p.library_count;
+  document.getElementById('dateFormat').value = p.date_format || 'iso';
+  document.getElementById('frontpageSlug').value = p.frontpage_slug || p.username;
+  const fp = p.frontpage_slug || p.username;
+  const link = document.getElementById('frontpageLink');
+    if (link) {
+      const frontpageUrl = `/home/${fp}`;
+      link.href = frontpageUrl;
+      link.textContent = `Open frontpage (${frontpageUrl})`;
+    }
+}
+
+// --- API Keys handlers --- (DISABLED)
+/*
+async function loadApiKeys() {
+  const r = await fetch(apiPath('/api/profile/api-keys'));
+  if (!r.ok) return;
+  const keys = await r.json();
+  const container = document.getElementById('apiKeysList');
+  container.innerHTML = '';
+  if (!keys.length) {
+    container.innerHTML = '<div class="text-muted small">No API keys yet.</div>';
+    return;
+  }
+  const list = document.createElement('div');
+  list.className = 'list-group list-group-flush';
+  keys.forEach(k => {
+    const item = document.createElement('div');
+    item.className = 'list-group-item d-flex justify-content-between align-items-start';
+    const info = document.createElement('div');
+    const desc = document.createElement('div');
+    desc.className = 'fw-bold';
+    desc.textContent = k.description;
+    const details = document.createElement('div');
+    details.className = 'small text-muted';
+    details.innerHTML = `Key: <code>${k.key_preview}</code><br>Created: ${k.created_at || 'N/A'}<br>Last used: ${k.last_used_at || 'Never'}`;
+    info.appendChild(desc);
+    info.appendChild(details);
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-sm btn-outline-danger';
+    delBtn.textContent = 'Delete';
+    delBtn.onclick = async () => {
+      if (!confirm(`Delete API key "${k.description}"?`)) return;
+      await fetch(apiPath(`/api/profile/api-keys/${k.id}`), { method: 'DELETE' });
+      loadApiKeys();
+    };
+    item.appendChild(info);
+    item.appendChild(delBtn);
+    list.appendChild(item);
+  });
+  container.appendChild(list);
+}
+*/
+
+// --- Active Handlers ---
+document.getElementById('pwdForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  const body = { current_password: f.current.value, new_password: f.new.value };
+  const r = await fetch(apiPath('/api/profile/password'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const ok = document.getElementById('pwdOk');
+  const err = document.getElementById('pwdErr');
+  ok.style.display = 'none'; err.style.display = 'none';
+  if (r.ok) {
+    ok.style.display = 'block';
+    f.reset();
+  } else {
+    const msg = await r.json().catch(()=>({detail:'Error'}));
+    err.textContent = msg.detail || 'Error updating password';
+    err.style.display = 'block';
+  }
+});
+
+loadProfile();
+// loadApiKeys();  // DISABLED: API Keys feature
+
+document.getElementById('savePrefs').addEventListener('click', async () => {
+  const dateFormat = document.getElementById('dateFormat').value;
+  const frontpageSlug = document.getElementById('frontpageSlug').value.trim();
+  
+  const r1 = await fetch(apiPath('/api/profile/preferences'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date_format: dateFormat }) });
+  const r2 = await fetch(apiPath('/api/profile/frontpage'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug: frontpageSlug }) });
+  
+  const ok = document.getElementById('prefOk');
+  const err = document.getElementById('prefErr');
+  ok.style.display = 'none'; err.style.display = 'none';
+  
+  if (r1.ok && r2.ok) {
+    ok.style.display = 'block';
+    await loadProfile();
+  } else {
+    const d1 = await r1.json().catch(() => ({}));
+    const d2 = await r2.json().catch(() => ({}));
+    err.textContent = d1.detail || d2.detail || 'Error saving preferences';
+    err.style.display = 'block';
+  }
+});
+
+// --- Audiobookshelf handlers --- (DISABLED)
+/*
+async function loadAbsConfig() {
+  try {
+    const r = await fetch(apiPath('/api/audiobookshelf/config'));
+    if (r.ok) {
+      const cfg = await r.json();
+      document.getElementById('absHost').value = cfg.host || '';
+      document.getElementById('absToken').value = cfg.api_token || '';
+      updateAbsLibrarySelect(cfg.libraries || [], cfg.selected_library || '');
+    }
+  } catch (e) {
+    console.error('Error loading Audiobookshelf config:', e);
+  }
+}
+
+function updateAbsLibrarySelect(libraries, selected) {
+  const sel = document.getElementById('absLibrary');
+  sel.innerHTML = '<option value="">Select a library...</option>';
+  libraries.forEach(lib => {
+    const opt = document.createElement('option');
+    opt.value = lib.id;
+    opt.textContent = lib.name;
+    sel.appendChild(opt);
+  });
+  if (selected) sel.value = selected;
+  // Trigger preview fetch when libraries are loaded and selection exists
+  if (sel.value) {
+    fetchAbsSeriesPreview();
+  }
+}
+
+function setAbsStatus(msg, type = 'info') {
+  const el = document.getElementById('absStatus');
+  el.className = `alert alert-${type}`;
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+document.getElementById('absFetchBtn').addEventListener('click', async () => {
+  const host = document.getElementById('absHost').value.trim();
+  const token = document.getElementById('absToken').value.trim();
+  
+  if (!host || !token) {
+    setAbsStatus('Host and Token are required', 'warning');
+    return;
+  }
+  
+  const btn = document.getElementById('absFetchBtn');
+  btn.disabled = true;
+  
+  try {
+    const r = await fetch(apiPath('/api/audiobookshelf/libraries'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, api_token: token })
+    });
+    
+    if (r.ok) {
+      const data = await r.json();
+      updateAbsLibrarySelect(data.libraries || [], '');
+      setAbsStatus('Libraries fetched successfully', 'success');
+      
+      // Save config
+      await fetch(apiPath('/api/audiobookshelf/config'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host, api_token: token, selected_library: '', libraries: data.libraries || [] })
+      });
+    } else {
+      const err = await r.json().catch(() => ({}));
+      setAbsStatus('Error: ' + (err.error || 'Failed to fetch libraries'), 'danger');
+    }
+  } catch (e) {
+    setAbsStatus('Error: ' + e.message, 'danger');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// Keep current titles preview in memory
+let absCurrentTitles = [];
+
+async function fetchAbsSeriesPreview() {
+  const host = document.getElementById('absHost').value.trim();
+  const token = document.getElementById('absToken').value.trim();
+  const libId = document.getElementById('absLibrary').value;
+  const preview = document.getElementById('absPreview');
+  const list = document.getElementById('absTitlesList');
+  const summary = document.getElementById('absFetchSummary');
+  const importBtn = document.getElementById('absImportBtn');
+
+  importBtn.disabled = true;
+  summary.textContent = 'Fetching series...';
+  preview.style.display = 'none';
+  list.innerHTML = '';
+  absCurrentTitles = [];
+
+  if (!host || !token || !libId) {
+    summary.textContent = 'Select host, token, and library to preview titles.';
+    return;
+  }
+
+  try {
+    const r = await fetch(apiPath('/api/audiobookshelf/series'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, api_token: token, library_id: libId })
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      summary.textContent = 'Error fetching series: ' + (err.error || 'Unknown');
+      return;
+    }
+    const data = await r.json();
+    const titles = Array.isArray(data.titles) ? data.titles : [];
+    absCurrentTitles = titles;
+    summary.textContent = `${titles.length} titles found`;
+    if (titles.length) {
+      preview.style.display = '';
+      list.innerHTML = titles.map(t => `
+        <li class=\"list-group-item d-flex align-items-center\">
+          <input type=\"checkbox\" class=\"form-check-input me-2 abs-check\" checked>
+          <span class=\"flex-grow-1\">${t}</span>
+        </li>
+      `).join('');
+      importBtn.disabled = false;
+    } else {
+      preview.style.display = 'none';
+      importBtn.disabled = true;
+    }
+  } catch (e) {
+    summary.textContent = 'Error: ' + e.message;
+    preview.style.display = 'none';
+    importBtn.disabled = true;
+  }
+}
+document.getElementById('absSelectAll').addEventListener('click', () => {
+  document.querySelectorAll('.abs-check').forEach(cb => cb.checked = true);
+});
+
+document.getElementById('absDeselectAll').addEventListener('click', () => {
+  document.querySelectorAll('.abs-check').forEach(cb => cb.checked = false);
+});
+
+
+// Save selected library and fetch preview
+document.getElementById('absLibrary').addEventListener('change', async () => {
+  const host = document.getElementById('absHost').value.trim();
+  const token = document.getElementById('absToken').value.trim();
+  const libId = document.getElementById('absLibrary').value;
+  try {
+    await fetch(apiPath('/api/audiobookshelf/config'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, api_token: token, selected_library: libId })
+    });
+  } catch (e) {
+    // non-fatal
+  }
+  if (libId) {
+    fetchAbsSeriesPreview();
+  }
+});
+
+document.getElementById('absImportBtn').addEventListener('click', async () => {
+  const host = document.getElementById('absHost').value.trim();
+  const token = document.getElementById('absToken').value.trim();
+  const libId = document.getElementById('absLibrary').value;
+  
+  if (!libId) {
+    setAbsStatus('Please select a library', 'warning');
+    return;
+  }
+  
+  const btn = document.getElementById('absImportBtn');
+  btn.disabled = true;
+  btn.textContent = 'Importing...';
+  
+  try {
+    // Use cached preview titles if available, otherwise fetch
+    let titles = absCurrentTitles;
+    if (!titles || !titles.length) {
+      const sr = await fetch(apiPath('/api/audiobookshelf/series'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host, api_token: token, library_id: libId })
+      });
+      if (!sr.ok) {
+        const err = await sr.json().catch(() => ({}));
+        setAbsStatus('Error fetching series: ' + (err.error || 'Unknown'), 'danger');
+        return;
+      }
+      const seriesData = await sr.json();
+      titles = seriesData.titles || [];
+    }
+    
+    // Then import them
+    const allChecks = Array.from(document.querySelectorAll('.abs-check'));
+    const selected = allChecks
+      .filter(cb => cb.checked)
+      .map(cb => cb.closest('li').querySelector('span').textContent);
+    const unselected = allChecks
+      .filter(cb => !cb.checked)
+      .map(cb => cb.closest('li').querySelector('span').textContent);
+    const ir = await fetch(apiPath('/api/audiobookshelf/import'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ titles: selected.length ? selected : titles, ignored: unselected })
+    });
+    
+    if (ir.ok) {
+      const result = await ir.json();
+      setAbsStatus(`Imported ${result.imported || result.inserted || 0} series successfully`, 'success');
+    } else {
+      const err = await ir.json().catch(() => ({}));
+      setAbsStatus('Error importing: ' + (err.error || 'Unknown'), 'danger');
+    }
+  } catch (e) {
+    setAbsStatus('Error: ' + e.message, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Import Series';
+  }
+});
+*/
+
+// --- Notifications handlers ---
+async function loadNotifications() {
+  try {
+    const r = await fetch(apiPath('/api/notifications/settings'));
+    if (r.ok) {
+      const n = await r.json();
+      document.getElementById('notifyEnabled').checked = !!n.enabled;
+      document.getElementById('notifyUrls').value = (n.urls || []).join('\n');
+      document.getElementById('notifyNewFound').checked = !!n.notify_new_audiobook;
+      document.getElementById('notifyRelease').checked = !!n.notify_release;
+    }
+  } catch (e) {
+    console.error('Error loading notifications:', e);
+  }
+}
+
+document.getElementById('notifySaveBtn').addEventListener('click', async () => {
+  const enabled = document.getElementById('notifyEnabled').checked;
+  const urls = document.getElementById('notifyUrls').value
+    .split('\n')
+    .map(u => u.trim())
+    .filter(u => u.length > 0);
+  const notify_new_audiobook = document.getElementById('notifyNewFound').checked;
+  const notify_release = document.getElementById('notifyRelease').checked;
+  
+  const ok = document.getElementById('notifyOk');
+  const err = document.getElementById('notifyErr');
+  ok.style.display = 'none';
+  err.style.display = 'none';
+  
+  try {
+    const r = await fetch(apiPath('/api/notifications/settings'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled, urls, notify_new_audiobook, notify_release })
+    });
+    
+    if (r.ok) {
+      ok.style.display = 'block';
+    } else {
+      const data = await r.json().catch(() => ({}));
+      err.textContent = data.detail || 'Error saving settings';
+      err.style.display = 'block';
+    }
+  } catch (e) {
+    err.textContent = e.message;
+    err.style.display = 'block';
+  }
+});
+
+document.getElementById('notifyTestBtn').addEventListener('click', async () => {
+  const ok = document.getElementById('notifyOk');
+  const err = document.getElementById('notifyErr');
+  ok.style.display = 'none';
+  err.style.display = 'none';
+  
+  const btn = document.getElementById('notifyTestBtn');
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  
+  try {
+    const r = await fetch(apiPath('/api/notifications/test'), { method: 'POST' });
+    
+    if (r.ok) {
+      const data = await r.json();
+      if (data.sent) {
+        ok.textContent = 'Test notification sent successfully!';
+        ok.style.display = 'block';
+      } else {
+        err.textContent = 'Notification not sent (disabled or no URLs configured)';
+        err.style.display = 'block';
+      }
+    } else {
+      err.textContent = 'Error sending test notification';
+      err.style.display = 'block';
+    }
+  } catch (e) {
+    err.textContent = e.message;
+    err.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send Test';
+  }
+});
+
+// Load on page init
+// loadAbsConfig();  // DISABLED: Audiobookshelf Import feature
+loadNotifications();
+</script>
+{% endblock %}

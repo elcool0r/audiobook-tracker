@@ -1,0 +1,415 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Settings</h1>
+{% if user.role != 'admin' %}
+<div class="alert alert-warning">Only admin can update settings.</div>
+{% endif %}
+<form id="settingsForm" {% if user.role != 'admin' %}disabled{% endif %}>
+  <div class="mb-3">
+    <label class="form-label">Public landing slug</label>
+    <input class="form-control" name="default_frontpage_slug" list="frontpageSlugList" value="{{ settings.default_frontpage_slug or '' }}" placeholder="username or frontpage slug" />
+    <datalist id="frontpageSlugList"></datalist>
+    <div class="form-text">Visitors that are not signed in will be redirected to /home/&lt;slug&gt; when / is opened. Leave empty to keep showing the login screen.</div>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">API Request Rate limit(requests per second)</label>
+    <input class="form-control" name="rate_rps" value="{{ settings.rate_rps }}" />
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Max job history</label>
+    <input class="form-control" name="max_job_history" type="number" value="{{ settings.max_job_history }}" />
+    <div class="form-text">Maximum number of jobs to keep in history. Older jobs will be automatically pruned.</div>
+  </div>
+  
+  <div class="card mb-3">
+    <div class="card-header">API Settings</div>
+    <div class="card-body">
+      <div class="mb-3">
+        <label class="form-label">User Agent (optional)</label>
+        <input class="form-control" name="user_agent" placeholder="e.g., Mozilla/5.0 (Windows NT 10.0; Win64; x64)" value="{{ settings.user_agent or '' }}" />
+        <div class="form-text">Custom User-Agent header for API requests. Leave empty to use default.</div>
+      </div>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" name="allow_non_admin_series_search" id="allowNonAdminSeriesSearch" {% if settings.allow_non_admin_series_search %}checked{% endif %} />
+        <label class="form-check-label" for="allowNonAdminSeriesSearch">Allow non-admin users to search series online</label>
+      </div>
+      <div class="form-check form-switch mt-2">
+        <input class="form-check-input" type="checkbox" name="skip_known_series_search" id="skipKnownSeriesSearchToggle" {% if settings.skip_known_series_search %}checked{% endif %} />
+        <label class="form-check-label" for="skipKnownSeriesSearchToggle">Skip series search when the title is already known</label>
+        <div class="form-text">When enabled, searching for an exact known title returns a shortcut response instead of querying Audible.</div>
+      </div>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" name="debug_logging" id="debugLoggingToggle" {% if settings.debug_logging %}checked{% endif %} />
+        <label class="form-check-label" for="debugLoggingToggle">Enable debug logging</label>
+        <div class="form-text">Enable detailed logging for troubleshooting. Requires app restart to take effect.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">Proxy Settings</div>
+    <div class="card-body">
+      <div class="form-check form-switch mb-3">
+        <input class="form-check-input" type="checkbox" name="proxy_enabled" id="proxyEnabledToggle" {% if settings.proxy_enabled %}checked{% endif %} />
+        <label class="form-check-label" for="proxyEnabledToggle">Enable proxy</label>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Proxy URL</label>
+        <input class="form-control" name="proxy_url" placeholder="http://proxy.example.com:8080" value="{{ settings.proxy_url or '' }}" />
+        <div class="form-text">Format: http://host:port, https://host:port, or socks5://host:port</div>
+      </div>
+      <div class="row">
+        <div class="col-md-6 mb-3">
+          <label class="form-label">Proxy username (optional)</label>
+          <input class="form-control" name="proxy_username" value="{{ settings.proxy_username or '' }}" />
+        </div>
+        <div class="col-md-6 mb-3">
+          <label class="form-label">Proxy password (optional)</label>
+          <input class="form-control" name="proxy_password" type="password" value="{{ settings.proxy_password or '' }}" data-bwignore="true" />
+        </div>
+      </div>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="testProxyBtn">Test Proxy Connection</button>
+      <div id="proxyTestResult" class="mt-2" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">Auto-Refresh Settings</div>
+    <div class="card-body">
+      <div class="mb-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" name="auto_refresh_enabled" id="autoRefreshToggle" {% if settings.auto_refresh_enabled %}checked{% endif %} />
+          <label class="form-check-label" for="autoRefreshToggle">Enable automatic series refresh</label>
+        </div>
+        <div class="form-text">When enabled, series will be automatically refreshed on a periodic schedule.</div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Manual Refresh Interval (minutes)</label>
+        <input class="form-control" name="manual_refresh_interval_minutes" type="number" min="1" max="1440" value="{{ settings.manual_refresh_interval_minutes }}" />
+        <div class="form-text">The interval over which to spread reschedule times evenly when using "Reschedule All" (1-1440 minutes).</div>
+      </div>
+      <button type="button" class="btn btn-sm btn-outline-primary" id="rescheduleAllBtn">Reschedule All Series</button>
+      <div id="rescheduleResult" class="mt-2" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">Database Maintenance</div>
+    <div class="card-body">
+      <p class="text-muted small">Remove cached series data and compact database to reclaim disk space. Series titles will be preserved and data will be re-fetched on next refresh.</p>
+      <p class="text-warning small"><strong>Note:</strong> These operations may take several minutes and will lock the database. The application may be unresponsive during this time.</p>
+      <button type="button" class="btn btn-sm btn-outline-info me-2" id="showDbStatsBtn">Show Database Stats</button>
+      <button type="button" class="btn btn-sm btn-outline-danger me-2" id="purgeAndCompactBtn">Purge & Compact Database</button>
+      <button type="button" class="btn btn-sm btn-outline-warning" id="dumpRestoreBtn">Dump & Restore (Reclaim Space)</button>
+      <div id="dbStatsResult" class="mt-3" style="display:none"></div>
+      <div id="purgeResult" class="mt-2" style="display:none"></div>
+      <div id="dumpRestoreResult" class="mt-2" style="display:none"></div>
+    </div>
+  </div>
+  
+  <button class="btn btn-primary">Save</button>
+</form>
+<div id="saved" style="display:none" class="alert alert-success mt-3">Saved</div>
+<script>
+let currentSettings = null;
+function syncProxyFields() {
+  const enabled = document.querySelector('[name=proxy_enabled]').checked;
+  ['proxy_url','proxy_username','proxy_password'].forEach(name => {
+    const el = document.querySelector(`[name=${name}]`);
+    if (el) el.disabled = !enabled;
+  });
+  const testBtn = document.getElementById('testProxyBtn');
+  if (testBtn) testBtn.disabled = !enabled;
+}
+async function loadFrontpageSlugOptions() {
+  try {
+    const r = await fetch(apiPath('/api/users'));
+    if (!r.ok) return;
+    const users = await r.json();
+    const list = document.getElementById('frontpageSlugList');
+    if (!list) return;
+    list.innerHTML = '';
+    const seen = new Set();
+    users.forEach(u => {
+      const slug = (u.frontpage_slug || u.username || '').trim();
+      if (!slug || seen.has(slug)) return;
+      seen.add(slug);
+      const option = document.createElement('option');
+      option.value = slug;
+      option.textContent = u.username || slug;
+      list.appendChild(option);
+    });
+  } catch (err) {
+    console.error('Failed to load landing slug options', err);
+  }
+}
+async function loadSettings() {
+  const r = await fetch(apiPath('/api/settings'));
+  if (r.ok) {
+    currentSettings = await r.json();
+    document.querySelector('[name=default_frontpage_slug]').value = currentSettings.default_frontpage_slug || '';
+    document.querySelector('[name=rate_rps]').value = currentSettings.rate_rps;
+    document.querySelector('[name=max_job_history]').value = currentSettings.max_job_history || 100;
+    document.querySelector('[name=user_agent]').value = currentSettings.user_agent || '';
+    document.querySelector('[name=proxy_url]').value = currentSettings.proxy_url || '';
+    document.querySelector('[name=proxy_username]').value = currentSettings.proxy_username || '';
+    document.querySelector('[name=proxy_password]').value = currentSettings.proxy_password || '';
+    document.querySelector('[name=proxy_enabled]').checked = currentSettings.proxy_enabled !== false;
+    document.querySelector('[name=auto_refresh_enabled]').checked = currentSettings.auto_refresh_enabled || false;
+    document.querySelector('[name=manual_refresh_interval_minutes]').value = currentSettings.manual_refresh_interval_minutes || 10;
+    document.querySelector('[name=allow_non_admin_series_search]').checked = currentSettings.allow_non_admin_series_search || false;
+    document.querySelector('[name=skip_known_series_search]').checked = currentSettings.skip_known_series_search || false;
+    syncProxyFields();
+  }
+}
+
+loadSettings();
+loadFrontpageSlugOptions();
+
+const form = document.getElementById('settingsForm');
+form.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const data = {
+    default_frontpage_slug: form.default_frontpage_slug.value || null,
+    rate_rps: parseFloat(form.rate_rps.value) || 2.0,
+    max_job_history: parseInt(form.max_job_history.value,10) || 100,
+    auto_refresh_enabled: form.auto_refresh_enabled.checked || false,
+    manual_refresh_interval_minutes: parseInt(form.manual_refresh_interval_minutes.value,10) || 10,
+    response_groups: currentSettings && currentSettings.response_groups || null,
+    user_agent: form.user_agent.value || null,
+    allow_non_admin_series_search: form.allow_non_admin_series_search.checked || false,
+    skip_known_series_search: form.skip_known_series_search.checked || false,
+    debug_logging: form.debug_logging.checked || false,
+    proxy_enabled: form.proxy_enabled.checked || false,
+    proxy_url: form.proxy_url.value || null,
+    proxy_username: form.proxy_username.value || null,
+    proxy_password: form.proxy_password.value || null,
+    secret_key: currentSettings && currentSettings.secret_key || null
+  };
+  const resp = await fetch(apiPath('/api/settings'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
+  if (resp.ok) {
+    document.getElementById('saved').style.display = 'block';
+    setTimeout(()=>{document.getElementById('saved').style.display='none'},2000);
+    await loadSettings();
+  }
+});
+
+document.getElementById('proxyEnabledToggle').addEventListener('change', syncProxyFields);
+syncProxyFields();
+
+document.getElementById('testProxyBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('testProxyBtn');
+  const resultDiv = document.getElementById('proxyTestResult');
+  
+  btn.disabled = true;
+  btn.textContent = 'Testing...';
+  resultDiv.style.display = 'none';
+  
+  try {
+    const resp = await fetch(apiPath('/api/settings/test-proxy'), { method: 'POST' });
+    const data = await resp.json();
+    
+    resultDiv.style.display = 'block';
+    if (resp.ok && data.success) {
+      resultDiv.className = 'alert alert-success mt-2';
+      resultDiv.innerHTML = `<strong>✓ Success!</strong> ${data.message || 'Proxy connection working.'}`;
+    } else {
+      resultDiv.className = 'alert alert-warning mt-2';
+      const message = data.error || data.detail || data.message || 'Proxy connection failed.';
+      resultDiv.innerHTML = `<strong>⚠ ${message}</strong>`;
+    }
+  } catch (err) {
+    resultDiv.style.display = 'block';
+    resultDiv.className = 'alert alert-danger mt-2';
+    resultDiv.innerHTML = `<strong>✗ Error!</strong> ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Test Proxy Connection';
+  }
+});
+
+document.getElementById('rescheduleAllBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('rescheduleAllBtn');
+  const resultDiv = document.getElementById('rescheduleResult');
+  
+  if (!confirm('This will reschedule all series to refresh over the next ' + form.manual_refresh_interval_minutes.value + ' minutes. Continue?')) {
+    return;
+  }
+  
+  btn.disabled = true;
+  btn.textContent = 'Rescheduling...';
+  resultDiv.style.display = 'none';
+  
+  try {
+    const resp = await fetch(apiPath('/api/series/reschedule-all'), { method: 'POST' });
+    const data = await resp.json();
+    
+    resultDiv.style.display = 'block';
+    if (resp.ok) {
+      resultDiv.className = 'alert alert-success mt-2';
+      resultDiv.innerHTML = `<strong>✓ Success!</strong> ${data.message || 'All series rescheduled.'}`;
+    } else {
+      resultDiv.className = 'alert alert-warning mt-2';
+      const message = data.error || data.detail || data.message || 'Reschedule failed.';
+      resultDiv.innerHTML = `<strong>⚠ ${message}</strong>`;
+    }
+  } catch (err) {
+    resultDiv.style.display = 'block';
+    resultDiv.className = 'alert alert-danger mt-2';
+    resultDiv.innerHTML = `<strong>✗ Error!</strong> ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Reschedule All Series';
+  }
+});
+
+document.getElementById('showDbStatsBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('showDbStatsBtn');
+  const resultDiv = document.getElementById('dbStatsResult');
+  
+  btn.disabled = true;
+  btn.textContent = 'Loading...';
+  resultDiv.style.display = 'none';
+  
+  try {
+    const resp = await fetch(apiPath('/api/database/stats'));
+    const data = await resp.json();
+    
+    if (resp.ok) {
+      resultDiv.style.display = 'block';
+      resultDiv.className = 'mt-3';
+      
+      let html = '<table class="table table-sm table-bordered"><thead><tr><th>Collection</th><th>Documents</th><th>Data Size</th><th>Index Size</th><th>Total Size</th></tr></thead><tbody>';
+      
+      let totalData = 0;
+      let totalIndex = 0;
+      
+      data.collections.forEach(col => {
+        const dataMB = (col.size / (1024 * 1024)).toFixed(2);
+        const indexMB = (col.indexSize / (1024 * 1024)).toFixed(2);
+        const totalMB = ((col.size + col.indexSize) / (1024 * 1024)).toFixed(2);
+        totalData += col.size;
+        totalIndex += col.indexSize;
+        
+        html += `<tr>
+          <td><strong>${col.name}</strong></td>
+          <td>${col.count.toLocaleString()}</td>
+          <td>${dataMB} MB</td>
+          <td>${indexMB} MB</td>
+          <td>${totalMB} MB</td>
+        </tr>`;
+      });
+      
+      const totalDataMB = (totalData / (1024 * 1024)).toFixed(2);
+      const totalIndexMB = (totalIndex / (1024 * 1024)).toFixed(2);
+      const grandTotalMB = ((totalData + totalIndex) / (1024 * 1024)).toFixed(2);
+      
+      html += `<tr class="table-active"><td><strong>TOTAL</strong></td><td></td><td><strong>${totalDataMB} MB</strong></td><td><strong>${totalIndexMB} MB</strong></td><td><strong>${grandTotalMB} MB</strong></td></tr>`;
+      html += '</tbody></table>';
+      html += '<p class="text-muted small mt-2"><em>Note: Actual disk usage may be higher due to MongoDB internal overhead, journal files, and free space allocation.</em></p>';
+      
+      resultDiv.innerHTML = html;
+    } else {
+      resultDiv.style.display = 'block';
+      resultDiv.className = 'alert alert-warning mt-3';
+      const message = data.error || data.detail || 'Failed to load stats.';
+      resultDiv.innerHTML = `<strong>⚠ ${message}</strong>`;
+    }
+  } catch (err) {
+    resultDiv.style.display = 'block';
+    resultDiv.className = 'alert alert-danger mt-3';
+    resultDiv.innerHTML = `<strong>✗ Error!</strong> ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Show Database Stats';
+  }
+});
+
+document.getElementById('purgeAndCompactBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('purgeAndCompactBtn');
+  const resultDiv = document.getElementById('purgeResult');
+  
+  if (!confirm('⚠️ WARNING: This will:\n1. Remove all cached series data\n2. Compact the database to reclaim disk space\n\nThis process may take several minutes and will LOCK the database during compaction.\n\nThe application will be unresponsive during this time.\n\nContinue?')) {
+    return;
+  }
+  
+  btn.disabled = true;
+  btn.textContent = 'Purging & Compacting...';
+  resultDiv.style.display = 'block';
+  resultDiv.className = 'alert alert-info mt-2';
+  resultDiv.innerHTML = '<strong>⏳ Working...</strong> This may take several minutes. Please wait...';
+  
+  try {
+    const resp = await fetch(apiPath('/api/series/purge-and-compact'), { method: 'POST' });
+    const data = await resp.json();
+    
+    resultDiv.style.display = 'block';
+    if (resp.ok) {
+      resultDiv.className = 'alert alert-success mt-2';
+      const beforeMB = (data.size_before / (1024 * 1024)).toFixed(2);
+      const afterMB = (data.size_after / (1024 * 1024)).toFixed(2);
+      const savedMB = (beforeMB - afterMB).toFixed(2);
+      resultDiv.innerHTML = `<strong>✓ Success!</strong> Purged ${data.purged_count || 0} series and compacted database.<br>Series collection: ${beforeMB} MB → ${afterMB} MB (saved ${savedMB} MB)`;
+    } else {
+      resultDiv.className = 'alert alert-warning mt-2';
+      const message = data.error || data.detail || data.message || 'Operation failed.';
+      resultDiv.innerHTML = `<strong>⚠ ${message}</strong>`;
+    }
+  } catch (err) {
+    resultDiv.style.display = 'block';
+    resultDiv.className = 'alert alert-danger mt-2';
+    resultDiv.innerHTML = `<strong>✗ Error!</strong> ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Purge & Compact Database';
+  }
+});
+
+document.getElementById('dumpRestoreBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('dumpRestoreBtn');
+  const resultDiv = document.getElementById('dumpRestoreResult');
+  
+  if (!confirm('⚠️ WARNING: This will dump the entire database and restore it to reclaim disk space.\n\nThis is the MOST EFFECTIVE way to reduce database size (can reduce by 80-90%).\n\nThe process may take several minutes and the application will be unresponsive.\n\nAll data will be preserved.\n\nContinue?')) {
+    return;
+  }
+  
+  btn.disabled = true;
+  document.getElementById('showDbStatsBtn').disabled = true;
+  document.getElementById('purgeAndCompactBtn').disabled = true;
+  btn.textContent = 'Dumping & Restoring...';
+  resultDiv.style.display = 'block';
+  resultDiv.className = 'alert alert-info mt-2';
+  resultDiv.innerHTML = '<strong>⏳ Working...</strong> Dumping database, rebuilding, and restoring. This will take several minutes. Please wait...';
+  
+  try {
+    const resp = await fetch(apiPath('/api/database/dump-restore'), { method: 'POST' });
+    const data = await resp.json();
+    
+    resultDiv.style.display = 'block';
+    if (resp.ok) {
+      resultDiv.className = 'alert alert-success mt-2';
+      const beforeMB = (data.size_before / (1024 * 1024)).toFixed(2);
+      const afterMB = (data.size_after / (1024 * 1024)).toFixed(2);
+      const savedMB = (beforeMB - afterMB).toFixed(2);
+      const savedPercent = ((savedMB / beforeMB) * 100).toFixed(1);
+      resultDiv.innerHTML = `<strong>✓ Success!</strong> Database rebuilt successfully.<br>
+        Size: ${beforeMB} MB → ${afterMB} MB (saved ${savedMB} MB, ${savedPercent}% reduction)<br>
+        <em class="small">Disk space will be reclaimed shortly. Run "Show Database Stats" to verify.</em>`;
+    } else {
+      resultDiv.className = 'alert alert-danger mt-2';
+      const message = data.error || data.detail || data.message || 'Operation failed.';
+      resultDiv.innerHTML = `<strong>✗ Error!</strong> ${message}`;
+    }
+  } catch (err) {
+    resultDiv.style.display = 'block';
+    resultDiv.className = 'alert alert-danger mt-2';
+    resultDiv.innerHTML = `<strong>✗ Error!</strong> ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    document.getElementById('showDbStatsBtn').disabled = false;
+    document.getElementById('purgeAndCompactBtn').disabled = false;
+    btn.textContent = 'Dump & Restore (Reclaim Space)';
+  }
+});
+</script>
+{% endblock %}

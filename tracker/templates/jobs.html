@@ -1,0 +1,149 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Jobs (Admin)</h1>
+<div class="d-flex align-items-center mb-3">
+  <button class="btn btn-sm btn-outline-primary me-2" id="refresh">Refresh</button>
+  <button class="btn btn-sm btn-outline-success me-2" id="testJob">Enqueue test job</button>
+  <button class="btn btn-sm btn-outline-danger me-2" id="clearJobs">Clear all jobs</button>
+  <span class="ms-3 small text-muted">Auto-refreshing every 3 seconds</span>
+</div>
+<div id="jobsTable"></div>
+<div id="jobsPagination" class="mt-2"></div>
+<script>
+let jobs = [];
+let autoRefreshInterval = null;
+let currentPage = 1;
+const itemsPerPage = 20;
+
+function render() {
+  const container = document.getElementById('jobsTable');
+  const paginationContainer = document.getElementById('jobsPagination');
+  container.innerHTML = '';
+  paginationContainer.innerHTML = '';
+  if (!jobs.length) { container.innerHTML = '<div class="alert alert-info">No jobs yet.</div>'; return; }
+
+  const totalPages = Math.ceil(jobs.length / itemsPerPage);
+  currentPage = Math.max(1, Math.min(currentPage, totalPages));
+
+  const start = (currentPage - 1) * itemsPerPage;
+  const end = start + itemsPerPage;
+  const pageJobs = jobs.slice(start, end);
+
+  const table = document.createElement('table');
+  table.className = 'table table-sm table-striped';
+  table.innerHTML = '<thead><tr><th>ID</th><th>Type</th><th>Status</th><th>User</th><th>Series</th><th>Started</th><th>Duration</th><th>Result</th></tr></thead>';
+  const tbody = document.createElement('tbody');
+  pageJobs.forEach(j => {
+    const tr = document.createElement('tr');
+    
+    // Calculate duration if started and finished
+    let duration = '';
+    if (j.started_at && j.finished_at) {
+      try {
+        const start = new Date(j.started_at);
+        const finish = new Date(j.finished_at);
+        const ms = finish - start;
+        duration = ms < 1000 ? `${ms}ms` : `${(ms/1000).toFixed(2)}s`;
+      } catch(e) {}
+    }
+    
+    // Format started time with date
+    let startedDisplay = '';
+    if (j.started_at) {
+      try {
+        const d = new Date(j.started_at);
+        startedDisplay = d.toLocaleString();
+      } catch(e) { startedDisplay = j.started_at; }
+    }
+    
+    // Display series title or ASIN
+    let displaySeries = j.title || j.asin || '';
+    
+    tr.innerHTML = `
+      <td class="small">${j.id}</td>
+      <td>${j.type || ''}</td>
+      <td>${j.status || ''}</td>
+      <td>${j.username || ''}</td>
+      <td>${displaySeries}</td>
+      <td class="small">${startedDisplay}</td>
+      <td class="small">${duration}</td>
+      <td style="max-width: 300px; word-wrap: break-word; white-space: pre-wrap;"><pre class="small mb-0" style="white-space: pre-wrap; word-wrap: break-word;">${j.result ? JSON.stringify(j.result) : ''}</pre></td>
+    `;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  container.appendChild(table);
+
+  if (totalPages > 1) {
+    const nav = document.createElement('nav');
+    const ul = document.createElement('ul');
+    ul.className = 'pagination pagination-sm mb-0';
+
+    const prevLi = document.createElement('li');
+    prevLi.className = 'page-item' + (currentPage === 1 ? ' disabled' : '');
+    const prevA = document.createElement('a');
+    prevA.className = 'page-link';
+    prevA.href = '#';
+    prevA.textContent = 'Previous';
+    prevA.onclick = (e) => { e.preventDefault(); if (currentPage > 1) { currentPage--; render(); } };
+    prevLi.appendChild(prevA);
+    ul.appendChild(prevLi);
+
+    for (let i = 1; i <= totalPages; i++) {
+      const li = document.createElement('li');
+      li.className = 'page-item' + (i === currentPage ? ' active' : '');
+      const a = document.createElement('a');
+      a.className = 'page-link';
+      a.href = '#';
+      a.textContent = i;
+      a.onclick = (e) => { e.preventDefault(); currentPage = i; render(); };
+      li.appendChild(a);
+      ul.appendChild(li);
+    }
+
+    const nextLi = document.createElement('li');
+    nextLi.className = 'page-item' + (currentPage === totalPages ? ' disabled' : '');
+    const nextA = document.createElement('a');
+    nextA.className = 'page-link';
+    nextA.href = '#';
+    nextA.textContent = 'Next';
+    nextA.onclick = (e) => { e.preventDefault(); if (currentPage < totalPages) { currentPage++; render(); } };
+    nextLi.appendChild(nextA);
+    ul.appendChild(nextLi);
+
+    nav.appendChild(ul);
+    paginationContainer.appendChild(nav);
+  }
+}
+
+async function loadJobs() {
+  const r = await fetch(apiPath('/api/jobs'));
+  if (!r.ok) { document.getElementById('jobsTable').innerHTML = '<div class="alert alert-danger">Forbidden</div>'; return; }
+  jobs = await r.json();
+  render();
+}
+
+document.getElementById('refresh').addEventListener('click', loadJobs);
+
+document.getElementById('testJob').addEventListener('click', async () => {
+  await fetch(apiPath('/api/jobs/test'), { method: 'POST' });
+  setTimeout(loadJobs, 500);
+});
+
+document.getElementById('clearJobs').addEventListener('click', async () => {
+  if (!confirm('Are you sure you want to clear all job history? This cannot be undone.')) return;
+  const btn = document.getElementById('clearJobs');
+  btn.disabled = true;
+  btn.textContent = 'Clearing...';
+  await fetch(apiPath('/api/jobs/clear'), { method: 'POST' });
+  await loadJobs();
+  btn.disabled = false;
+  btn.textContent = 'Clear all jobs';
+});
+
+// Auto-refresh every 3 seconds
+autoRefreshInterval = setInterval(loadJobs, 3000);
+
+loadJobs();
+</script>
+{% endblock %}

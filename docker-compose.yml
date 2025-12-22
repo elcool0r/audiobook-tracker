@@ -1,0 +1,36 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: audiobook_tracker
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: changeme123
+    # ports:
+    #   - "27017:27017"  # Removed for security
+    volumes:
+      - ./mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  tracker:
+    build: .
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_URI: mongodb://root:changeme123@mongo:27017
+      MONGO_DB: audiobook_tracker
+      SECRET_KEY: supersecretkey123456789
+    ports:
+      - "8000:8000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.audiobook.rule=Host(`audiobook-tracker.com`)"
+      - "traefik.http.routers.audiobook.tls=true"
+      - "traefik.http.routers.audiobook.tls.certresolver=letsencrypt"
+      - "traefik.http.services.audiobook.loadbalancer.server.port=8000"
+    command: ["uvicorn", "tracker.app:app", "--host", "0.0.0.0", "--port", "8000"]

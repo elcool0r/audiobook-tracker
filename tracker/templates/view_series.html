@@ -1,0 +1,91 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container mt-4">
+  <h1 class="text-center mb-4" id="seriesTitle">Series</h1>
+  <div class="d-flex justify-content-end mb-3">
+    <div class="btn-group" role="group" aria-label="Sort controls">
+      <button id="sortOldest" class="btn btn-outline-primary"><i class="bi bi-sort-numeric-down"></i> Oldest First</button>
+      <button id="sortNewest" class="btn btn-outline-primary"><i class="bi bi-sort-numeric-down-alt"></i> Newest First</button>
+    </div>
+  </div>
+  <div class="row row-cols-1 row-cols-md-3 g-4" id="booksGrid"></div>
+</div>
+<script>
+  const asin = "{{ asin }}";
+  let books = [];
+  let seriesName = '';
+  const fmt = new URLSearchParams(window.location.search).get('fmt') || 'iso';
+
+  function pad(n) { return n.toString().padStart(2, '0'); }
+  function fmtDateShort(val) {
+    if (!val) return '—';
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return val;
+    if (fmt === 'de') return `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}`;
+    if (fmt === 'us') return `${pad(d.getMonth()+1)}/${pad(d.getDate())}/${d.getFullYear()}`;
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  }
+
+  function fmtDurationMins(val) {
+    const mins = parseInt(val, 10);
+    if (isNaN(mins) || mins <= 0) return '';
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  }
+
+  function renderBooks() {
+    const grid = document.getElementById('booksGrid');
+    grid.innerHTML = '';
+    books.forEach(b => {
+      const col = document.createElement('div');
+      col.className = 'col';
+      const card = document.createElement('div');
+      card.className = 'card h-100';
+      if (b.image) {
+        const img = document.createElement('img');
+        img.src = b.image;
+        img.className = 'card-img-top';
+        img.alt = `Cover of ${b.title || ''}`;
+        card.appendChild(img);
+      }
+      const body = document.createElement('div');
+      body.className = 'card-body';
+      const h5 = document.createElement('h5'); h5.className = 'card-title text-truncate'; h5.textContent = b.title || ''; body.appendChild(h5);
+      const p1 = document.createElement('p'); p1.className = 'card-text small'; p1.innerHTML = `<strong>Narrator:</strong> ${b.narrators || ''}`; body.appendChild(p1);
+      const p2 = document.createElement('p'); p2.className = 'card-text small'; p2.innerHTML = `<strong>Duration:</strong> ${fmtDurationMins(b.runtime)}`; body.appendChild(p2);
+      const p3 = document.createElement('p'); p3.className = 'card-text small'; p3.innerHTML = `<strong>Release Date:</strong> ${fmtDateShort(b.release_date)}`; body.appendChild(p3);
+      if (b.url) { const a = document.createElement('a'); a.href = b.url; a.className = 'btn btn-sm btn-primary'; a.textContent = 'View on Audible'; body.appendChild(a); }
+      card.appendChild(body);
+      col.appendChild(card);
+      grid.appendChild(col);
+    });
+  }
+
+  async function loadSeries() {
+    try {
+      const r = await fetch(`/api/public/series/${encodeURIComponent(asin)}`);
+      if (!r.ok) return;
+      const data = await r.json();
+      seriesName = data.title || seriesName;
+      document.getElementById('seriesTitle').textContent = seriesName || 'Series';
+      books = Array.isArray(data.books) ? data.books : [];
+      // default newest first
+      books.sort((a,b) => new Date(b.release_date) - new Date(a.release_date));
+      renderBooks();
+    } catch (e) {}
+  }
+
+  document.getElementById('sortOldest').addEventListener('click', () => {
+    books.sort((a,b) => new Date(a.release_date) - new Date(b.release_date));
+    renderBooks();
+  });
+  document.getElementById('sortNewest').addEventListener('click', () => {
+    books.sort((a,b) => new Date(b.release_date) - new Date(a.release_date));
+    renderBooks();
+  });
+
+  loadSeries();
+</script>
+{% endblock %}

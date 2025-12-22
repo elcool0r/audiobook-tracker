@@ -1,0 +1,334 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1 id="seriesAdminTitle">Series</h1>
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-3">
+  <div class="input-group" style="max-width: 320px;">
+    <input id="filter" class="form-control" placeholder="Filter by title" />
+    <button class="btn btn-outline-secondary" id="clearFilter">Clear</button>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <button id="seriesPrev" class="btn btn-sm btn-outline-secondary" disabled>Prev</button>
+    <span id="seriesPagerInfo" class="text-muted small"></span>
+    <button id="seriesNext" class="btn btn-sm btn-outline-secondary" disabled>Next</button>
+    <div class="d-flex align-items-center gap-1">
+      <label class="mb-0 small" for="seriesPageSize"></label>
+      <select id="seriesPageSize" class="form-select form-select-sm">
+        <option value="10">10</option>
+        <option value="20">20</option>
+        <option value="50">50</option>
+      </select>
+    </div>
+  </div>
+</div>
+<div id="seriesList"></div>
+<script>
+let allSeries = [];
+const userDateFormat = "{{ user.date_format or 'iso' }}";
+let currentPage = 1;
+let totalSeries = 0;
+let totalPages = 1;
+let pageSize = 10;
+let currentFilter = '';
+let sortState = { key: 'title', asc: true };
+const sortableColumns = [
+  { key: 'title', label: 'Title' },
+  { key: 'asin', label: 'ASIN' },
+  { key: 'book_count', label: 'Books' },
+  { key: 'user_count', label: 'Users' },
+  { key: 'fetched_at', label: 'Fetched' },
+  { key: 'next_refresh_at', label: 'Next Refresh' },
+];
+
+function makeCoverIcon(src) {
+  if (!src) return null;
+  const icon = document.createElement('img');
+  icon.src = src;
+  icon.alt = 'Cover';
+  icon.className = 'me-2 rounded';
+  icon.style.width = '18px';
+  icon.style.height = '18px';
+  icon.style.objectFit = 'cover';
+  icon.setAttribute('data-bs-toggle', 'tooltip');
+  icon.setAttribute('data-bs-placement', 'right');
+  icon.setAttribute('data-bs-html', 'true');
+  icon.setAttribute('data-bs-custom-class', 'cover-tooltip');
+  icon.setAttribute('title', `<img src="${src}" style="width:180px;height:auto;" />`);
+  return icon;
+}
+
+function formatDate(val) {
+  if (!val) return '';
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return val;
+    const pad = (n) => n.toString().padStart(2, '0');
+    if (userDateFormat === 'de') return `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}`;
+    if (userDateFormat === 'us') return `${pad(d.getMonth()+1)}/${pad(d.getDate())}/${d.getFullYear()}`;
+    return d.toISOString().slice(0,10);
+  } catch(e) { return val; }
+}
+
+function formatDateTime(val) {
+  if (!val) return '';
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return val;
+    const pad = (n) => n.toString().padStart(2, '0');
+    const date = userDateFormat === 'de' ? `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}` :
+                 userDateFormat === 'us' ? `${pad(d.getMonth()+1)}/${pad(d.getDate())}/${d.getFullYear()}` :
+                 d.toISOString().slice(0,10);
+    const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return `${date} ${time}`;
+  } catch(e) { return val; }
+}
+
+function setSort(key) {
+  if (sortState.key === key) {
+    sortState.asc = !sortState.asc;
+  } else {
+    sortState.key = key;
+    sortState.asc = true;
+  }
+  currentPage = 1;
+  loadSeries(1);
+}
+
+
+function render(list) {
+  const container = document.getElementById('seriesList');
+  container.innerHTML = '';
+  if (!list.length) { container.innerHTML = '<div class="alert alert-info">No series found.</div>'; return; }
+  const table = document.createElement('table');
+  table.className = 'table table-striped table-sm';
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  sortableColumns.forEach(column => {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-link text-decoration-none p-0';
+    button.onclick = () => setSort(column.key);
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = column.label;
+    button.appendChild(labelSpan);
+    if (sortState.key === column.key) {
+      const arrow = document.createElement('span');
+      arrow.className = 'ms-1';
+      arrow.textContent = sortState.asc ? '▲' : '▼';
+      button.appendChild(arrow);
+      th.setAttribute('aria-sort', sortState.asc ? 'ascending' : 'descending');
+    }
+    th.appendChild(button);
+    headerRow.appendChild(th);
+  });
+  const actionsHeader = document.createElement('th');
+  actionsHeader.textContent = 'Actions';
+  actionsHeader.scope = 'col';
+  actionsHeader.className = 'text-end';
+  headerRow.appendChild(actionsHeader);
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  list.forEach(s => {
+    const tr = document.createElement('tr');
+    const urlCell = document.createElement('td');
+    if (s.asin) {
+      const coverSrc = s.cover_image || null;
+      const coverIcon = makeCoverIcon(coverSrc);
+      if (coverIcon) urlCell.appendChild(coverIcon);
+      const a = document.createElement('a');
+      a.href = (window.BASE_PATH || '') + '/series-books?asin=' + encodeURIComponent(s.asin);
+      a.textContent = s.title || '(untitled)';
+      urlCell.appendChild(a);
+    } else {
+      urlCell.textContent = s.title || '(untitled)';
+    }
+    urlCell.style.overflow = 'hidden';
+    urlCell.style.textOverflow = 'ellipsis';
+    urlCell.style.whiteSpace = 'nowrap';
+    tr.appendChild(urlCell);
+    const asin = document.createElement('td');
+    if (s.asin) {
+      const a = document.createElement('a');
+      a.href = s.url || '#';
+      a.target = s.url ? '_blank' : '';
+      a.rel = s.url ? 'noreferrer noopener' : '';
+      // Extract ASIN from URL (which is authoritative) for display
+      if (s.url) {
+        const urlMatch = s.url.match(/\/([A-Z0-9]+)(?:\?|$)/);
+        a.textContent = (urlMatch && urlMatch[1]) || s.asin;
+      } else {
+        a.textContent = s.asin;
+      }
+      asin.appendChild(a);
+    } else {
+      asin.textContent = '';
+    }
+    tr.appendChild(asin);
+    const books = document.createElement('td'); books.textContent = s.book_count || 0; tr.appendChild(books);
+    const users = document.createElement('td'); users.textContent = s.user_count || 0; tr.appendChild(users);
+    const fetched = document.createElement('td'); fetched.textContent = formatDateTime(s.fetched_at); tr.appendChild(fetched);
+    const nextRefresh = document.createElement('td'); nextRefresh.textContent = formatDateTime(s.next_refresh_at); tr.appendChild(nextRefresh);
+    const actions = document.createElement('td');
+    actions.className = 'text-end';
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm btn-outline-primary';
+    btn.textContent = 'Refresh books';
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = 'Enqueued...';
+      const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(s.asin)}/refresh`), { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      if (resp.ok) {
+        const data = await resp.json();
+        btn.textContent = 'Job: ' + (data.job_id || 'ok');
+      } else {
+        btn.textContent = 'Error';
+      }
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'Refresh books'; }, 3000);
+    };
+    actions.appendChild(btn);
+    
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'btn btn-sm btn-outline-secondary ms-2';
+    renameBtn.textContent = 'Rename title';
+    renameBtn.disabled = !s.asin;
+    renameBtn.onclick = async () => {
+      if (!s.asin) return;
+      const currentTitle = s.title || '';
+      const message = currentTitle ? `New display title for "${currentTitle}"?` : 'New display title for series?';
+      const input = prompt(message, currentTitle);
+      if (input === null) return;
+      const trimmed = input.trim();
+      if (!trimmed) {
+        alert('Title cannot be empty');
+        return;
+      }
+      renameBtn.disabled = true;
+      renameBtn.textContent = 'Saving...';
+      const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(s.asin)}/title`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmed }),
+      });
+      if (resp.ok) {
+        await loadSeries();
+        return;
+      }
+      renameBtn.textContent = 'Error';
+      setTimeout(() => {
+        renameBtn.disabled = !s.asin;
+        renameBtn.textContent = 'Rename title';
+      }, 2000);
+    };
+    actions.appendChild(renameBtn);
+    
+
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-sm btn-outline-danger ms-2';
+    delBtn.textContent = 'Delete';
+    delBtn.onclick = async () => {
+      const confirmMsg = `Are you sure you want to delete "${s.title || 'this series'}" (${s.asin})?\n\nThis will remove the series and all associated book data. This action cannot be undone.`;
+      if (!confirm(confirmMsg)) return;
+      delBtn.disabled = true; delBtn.textContent = 'Deleting...';
+      const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(s.asin)}`), { method: 'DELETE' });
+      if (resp.ok) {
+        await loadSeries();
+      } else {
+        delBtn.textContent = 'Error';
+        setTimeout(() => { delBtn.disabled = false; delBtn.textContent = 'Delete'; }, 3000);
+      }
+    };
+    actions.appendChild(delBtn);
+    
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  const wrapper = document.createElement('div');
+  wrapper.appendChild(table);
+  container.appendChild(wrapper);
+  try {
+    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.forEach(function (tooltipTriggerEl) { new bootstrap.Tooltip(tooltipTriggerEl); });
+  } catch (e) { /* non-fatal */ }
+  // Footer summary: earliest next refresh across series
+  const footer = document.createElement('div');
+  const times = list.map(s => s.next_refresh_at).filter(Boolean).sort();
+  if (times.length) {
+    footer.className = 'small text-muted mt-2';
+    footer.textContent = 'Next refresh scheduled at: ' + formatDateTime(times[0]);
+    container.appendChild(footer);
+  }
+}
+
+function updatePager() {
+  const pagerInfo = document.getElementById('seriesPagerInfo');
+  pagerInfo.textContent = `Page ${currentPage} of ${totalPages} (${totalSeries} total, ${pageSize} per page)`;
+  document.getElementById('seriesPrev').disabled = currentPage <= 1;
+  document.getElementById('seriesNext').disabled = currentPage >= totalPages;
+}
+
+async function loadSeries(page = currentPage) {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (currentFilter) {
+    params.set('filter', currentFilter);
+  }
+  if (sortState.key) {
+    params.set('sort', sortState.key);
+    params.set('order', sortState.asc ? 'asc' : 'desc');
+  }
+  const r = await fetch(apiPath(`/api/series?${params.toString()}`));
+  if (!r.ok) {
+    document.getElementById('seriesList').innerHTML = '<div class="alert alert-danger">Forbidden</div>';
+    return;
+  }
+  const payload = await r.json();
+  allSeries = payload.series;
+  totalSeries = payload.total;
+  totalPages = payload.total_pages;
+  currentPage = payload.page;
+  document.getElementById('seriesAdminTitle').textContent = `Series (${totalSeries})`;
+  render(allSeries);
+  updatePager();
+}
+
+document.getElementById('filter').addEventListener('input', (event) => {
+  currentFilter = (event.target.value || '').trim();
+  currentPage = 1;
+  loadSeries(1);
+});
+
+document.getElementById('clearFilter').addEventListener('click', () => {
+  document.getElementById('filter').value = '';
+  currentFilter = '';
+  currentPage = 1;
+  loadSeries(1);
+});
+
+document.getElementById('seriesPrev').addEventListener('click', () => {
+  if (currentPage > 1) {
+    loadSeries(currentPage - 1);
+  }
+});
+document.getElementById('seriesNext').addEventListener('click', () => {
+  if (currentPage < totalPages) {
+    loadSeries(currentPage + 1);
+  }
+});
+const pageSizeSelect = document.getElementById('seriesPageSize');
+pageSizeSelect.value = String(pageSize);
+pageSizeSelect.addEventListener('change', () => {
+  const val = parseInt(pageSizeSelect.value, 10);
+  if (isNaN(val) || val <= 0) {
+    pageSizeSelect.value = String(pageSize);
+    return;
+  }
+  pageSize = val;
+  currentPage = 1;
+  loadSeries(1);
+});
+
+loadSeries();
+</script>
+{% endblock %}

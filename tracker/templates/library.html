@@ -1,0 +1,905 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>My Library</h1>
+{% set search_enabled = user.role == 'admin' or settings.allow_non_admin_series_search %}
+<div class="row">
+  {% if search_enabled %}
+  <div class="col-md-6">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Search Series Online</h5>
+        <form id="seriesSearchForm">
+          <div class="mb-3">
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" id="bulkSearchToggle">
+              <label class="form-check-label" for="bulkSearchToggle">
+                Bulk search (multiple keywords)
+              </label>
+            </div>
+            <input class="form-control" name="query" placeholder="Series name" required />
+            <textarea class="form-control d-none" name="bulkQuery" id="bulkQuery" rows="4" placeholder="Enter multiple series names, one per line or comma-separated"></textarea>
+          </div>
+          <button class="btn btn-primary">Search</button>
+        </form>
+        <div id="bulkSortControls" class="d-none mt-2">
+          <div class="btn-group btn-group-sm" role="group" aria-label="Sort bulk search results">
+            <button type="button" class="btn btn-outline-secondary" id="bulkSortTitle">A → Z</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="seriesSearchMessage" class="mt-2" aria-live="polite"></div>
+    <div id="seriesResults"></div>
+    <div id="bulkPagination" class="mt-2 d-none"></div>
+  </div>
+  <div class="col-md-6">
+  {% else %}
+  <div class="col-12">
+  {% endif %}
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Known Series</h5>
+        <div class="mb-2">
+          <input class="form-control form-control-sm" id="knownSeriesSearch" placeholder="Search known series..." />
+        </div>
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <div class="btn-group btn-group-sm" role="group" aria-label="Sort known series">
+            <button type="button" class="btn btn-outline-secondary" id="knownSortTitle">A → Z</button>
+            <button type="button" class="btn btn-outline-secondary" id="knownSortBooks">Book count</button>
+            <button type="button" class="btn btn-outline-secondary" id="knownSortAdded">Added count</button>
+          </div>
+          <div class="form-check ms-auto">
+            <input class="form-check-input" type="checkbox" id="knownHideOwned" checked>
+            <label class="form-check-label" for="knownHideOwned">Hide in library</label>
+          </div>
+        </div>
+        <div id="knownSeries"></div>
+        <div id="knownSeriesPagination" class="mt-2"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="card mt-4">
+  <div class="card-body">
+    <h5 class="card-title" id="libraryTitle">My Library</h5>
+    <div class="mb-2">
+      <input class="form-control form-control-sm" id="librarySearch" placeholder="Search my library..." />
+    </div>
+    <div id="libraryTable"></div>
+  </div>
+</div>
+<script>
+const userDateFormat = "{{ user.date_format or 'iso' }}";
+const SEARCH_SKIP_HEADER = 'x-audiobook-search-skipped';
+const SEARCH_SKIP_TITLE_HEADER = 'x-audiobook-search-skipped-title';
+const SEARCH_SKIP_COUNT_HEADER = 'x-audiobook-search-skipped-count';
+
+let libraryItems = [];
+let bulkResults = [];
+let bulkSortState = { key: 'title', dir: 'asc' };
+let sortState = { key: 'title', dir: 'asc' };
+let knownAsins = new Set();
+let knownTitles = new Set();
+let knownTitlesNormalized = new Set();
+
+function normalizeTitle(title) {
+  if (!title) return '';
+  return title
+    .toLowerCase()
+    .replace(/series$/i, '')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim();
+}
+
+function makeCoverIcon(src) {
+  if (!src) return null;
+  const icon = document.createElement('img');
+  icon.src = src;
+  icon.alt = 'Cover';
+  icon.className = 'me-2 rounded';
+  icon.style.width = '18px';
+  icon.style.height = '18px';
+  icon.style.objectFit = 'cover';
+  icon.setAttribute('data-bs-toggle', 'tooltip');
+  icon.setAttribute('data-bs-placement', 'right');
+  icon.setAttribute('data-bs-html', 'true');
+  icon.setAttribute('data-bs-custom-class', 'cover-tooltip');
+  icon.setAttribute('title', `<img src="${src}" style="width:180px;height:auto;" />`);
+  return icon;
+}
+
+function setSeriesSearchMessage(message, variant = 'info') {
+  const el = document.getElementById('seriesSearchMessage');
+  if (!el) return;
+  if (!message) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `<div class="alert alert-${variant} py-1 mb-2">${message}</div>`;
+}
+
+function initCoverTooltips() {
+  try {
+    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.forEach(function (tooltipTriggerEl) { new bootstrap.Tooltip(tooltipTriggerEl); });
+  } catch (e) {
+    /* bootstrap might not be available yet; ignore */
+  }
+}
+
+function formatDate(val) {
+  if (!val) return '';
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return val;
+    const pad = (n) => n.toString().padStart(2, '0');
+    if (userDateFormat === 'de') return `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}`;
+    if (userDateFormat === 'us') return `${pad(d.getMonth()+1)}/${pad(d.getDate())}/${d.getFullYear()}`;
+    return d.toISOString().slice(0,10);
+  } catch(e) { return val; }
+}
+
+function formatDateTime(val) {
+  if (!val) return '';
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return val;
+    const pad = (n) => n.toString().padStart(2, '0');
+    const date = userDateFormat === 'de' ? `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}` :
+                 userDateFormat === 'us' ? `${pad(d.getMonth()+1)}/${pad(d.getDate())}/${d.getFullYear()}` :
+                 d.toISOString().slice(0,10);
+    const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return `${date} ${time}`;
+  } catch(e) { return val; }
+}
+
+function getLatestRelease(books) {
+  if (!Array.isArray(books)) return null;
+  const now = new Date();
+  let latest = null;
+  for (const b of books) {
+    if (!b || !b.release_date) continue;
+    const d = new Date(b.release_date);
+    if (isNaN(d.getTime())) continue;
+    // Skip future dates and obviously invalid dates (year > 2100)
+    if (d > now || d.getFullYear() > 2100) continue;
+    if (!latest || d > latest) latest = d;
+  }
+  return latest ? latest.toISOString() : null;
+}
+
+function dateValue(val) {
+  if (!val) return null;
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d.getTime();
+}
+
+function compareValues(a, b, key) {
+  if (key === 'bookCount') return (a.bookCount || 0) - (b.bookCount || 0);
+  if (key === 'lastRelease') return (a._lastReleaseTs || 0) - (b._lastReleaseTs || 0);
+  if (key === 'fetched_at') return (a._fetchedTs || 0) - (b._fetchedTs || 0);
+  const av = (a[key] || '').toString().toLowerCase();
+  const bv = (b[key] || '').toString().toLowerCase();
+  return av.localeCompare(bv);
+}
+
+function sortLibrary(items) {
+  const dir = sortState.dir === 'asc' ? 1 : -1;
+  return [...items].sort((a, b) => dir * compareValues(a, b, sortState.key));
+}
+
+function renderSortHeader(th, key, label) {
+  th.textContent = label;
+  const indicator = document.createElement('span');
+  indicator.className = 'ms-1 text-muted';
+  if (sortState.key === key) indicator.textContent = sortState.dir === 'asc' ? '▲' : '▼';
+  th.appendChild(indicator);
+  th.style.cursor = 'pointer';
+  th.onclick = () => {
+    if (sortState.key === key) {
+      sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortState = { key, dir: 'asc' };
+    }
+    renderLibraryTable();
+  };
+}
+
+async function fetchLibrary() {
+  const r = await fetch(apiPath('/api/library'));
+  if (!r.ok) return;
+  const items = await r.json();
+  libraryItems = items.map(it => {
+    const books = Array.isArray(it.books) ? it.books : [];
+    const lastRelease = getLatestRelease(books);
+    return {
+      ...it,
+      bookCount: books.length,
+      lastRelease,
+      _lastReleaseTs: dateValue(lastRelease),
+      _fetchedTs: dateValue(it.fetched_at),
+    };
+  });
+  knownAsins = new Set(libraryItems.filter(it => it.asin).map(it => (it.asin || '').toLowerCase()));
+  knownTitles = new Set(libraryItems.map(it => (it.title || '').toLowerCase()));
+  knownTitlesNormalized = new Set(libraryItems.map(it => normalizeTitle(it.title)));
+  document.getElementById('libraryTitle').textContent = `My Library (${libraryItems.length})`;
+  renderLibraryTable();
+}
+
+function renderLibraryTable() {
+  const container = document.getElementById('libraryTable');
+  container.innerHTML = '';
+  if (!libraryItems.length) {
+    container.innerHTML = '<div class="alert alert-info">No items yet.</div>';
+    return;
+  }
+
+  const searchTerm = document.getElementById('librarySearch').value.toLowerCase();
+  const filteredItems = libraryItems.filter(item => 
+    item.title.toLowerCase().includes(searchTerm) || 
+    (item.asin && item.asin.toLowerCase().includes(searchTerm))
+  );
+
+  if (!filteredItems.length) {
+    container.innerHTML = '<div class="alert alert-info">No matching items.</div>';
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'table table-striped table-sm align-middle';
+
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  const headers = [
+    { key: 'title', label: 'Title' },
+    { key: 'asin', label: 'ASIN' },
+    { key: 'bookCount', label: 'Books' },
+    { key: 'lastRelease', label: 'Last Release' },
+    { key: 'fetched_at', label: 'Fetched' },
+    { key: '', label: '' },
+  ];
+  headers.forEach(h => {
+    const th = document.createElement('th');
+    renderSortHeader(th, h.key, h.label);
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  const rows = sortLibrary(filteredItems);
+  rows.forEach(it => {
+    const tr = document.createElement('tr');
+
+    const tdTitle = document.createElement('td');
+    const coverSrc = it.cover_image || (Array.isArray(it.books) ? (it.books.find(b => b && b.image)?.image || null) : null);
+    const coverIcon = makeCoverIcon(coverSrc);
+    if (coverIcon) tdTitle.appendChild(coverIcon);
+    if (it.asin) {
+      const a = document.createElement('a');
+      a.href = (window.BASE_PATH || '') + '/series-books?asin=' + encodeURIComponent(it.asin);
+      a.textContent = it.title || '(untitled)';
+      tdTitle.appendChild(a);
+    } else {
+      tdTitle.textContent = it.title || '(untitled)';
+    }
+    tr.appendChild(tdTitle);
+
+    const tdAsin = document.createElement('td');
+    if (it.asin) {
+      const audibleUrl = it.url || `https://www.audible.com/series/${encodeURIComponent(it.asin)}`;
+      const a = document.createElement('a');
+      a.href = audibleUrl;
+      a.target = '_blank';
+      a.rel = 'noreferrer noopener';
+      // Extract ASIN from URL (which is authoritative) for display
+      const urlMatch = audibleUrl.match(/\/([A-Z0-9]+)(?:\?|$)/);
+      a.textContent = (urlMatch && urlMatch[1]) || it.asin;
+      tdAsin.appendChild(a);
+    }
+    tr.appendChild(tdAsin);
+
+    const tdBooks = document.createElement('td');
+    tdBooks.textContent = typeof it.bookCount === 'number' ? it.bookCount : '';
+    tr.appendChild(tdBooks);
+
+    const tdLast = document.createElement('td');
+    tdLast.textContent = formatDate(it.lastRelease);
+    tr.appendChild(tdLast);
+
+    const tdFetched = document.createElement('td');
+    tdFetched.textContent = formatDateTime(it.fetched_at);
+    tr.appendChild(tdFetched);
+
+    const tdActions = document.createElement('td');
+    if (it.asin) {
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn btn-sm btn-outline-danger';
+      removeBtn.textContent = 'Remove';
+      removeBtn.onclick = async () => {
+        // Two-step confirm without browser alert
+        if (removeBtn.dataset.confirmed !== 'true') {
+          removeBtn.dataset.confirmed = 'true';
+          removeBtn.textContent = 'Confirm remove';
+          removeBtn.classList.remove('btn-outline-danger');
+          removeBtn.classList.add('btn-danger');
+          setTimeout(() => {
+            if (removeBtn.dataset.confirmed === 'true') {
+              removeBtn.dataset.confirmed = '';
+              removeBtn.textContent = 'Remove';
+              removeBtn.classList.add('btn-outline-danger');
+              removeBtn.classList.remove('btn-danger');
+            }
+          }, 3000);
+          return;
+        }
+        removeBtn.disabled = true;
+        removeBtn.textContent = 'Removing...';
+        await fetch(apiPath(`/api/library?asin=${encodeURIComponent(it.asin)}`), { method: 'DELETE' });
+        await Promise.all([fetchLibrary(), loadKnownSeries()]);
+      };
+      tdActions.appendChild(removeBtn);
+    }
+    tr.appendChild(tdActions);
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  container.appendChild(table);
+
+  initCoverTooltips();
+}
+
+async function searchSeries(query, num) {
+  const container = document.getElementById('seriesResults');
+  if (!container) return;
+  const cleanedQuery = (query || '').trim();
+  if (!cleanedQuery) {
+    setSeriesSearchMessage('');
+    container.innerHTML = '';
+    return;
+  }
+  setSeriesSearchMessage('');
+  const body = { query: cleanedQuery };
+  if (num) body.num_results = num;
+  const r = await fetch(apiPath('/api/series/search'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const results = await r.json();
+  const skipHeader = r.headers.get(SEARCH_SKIP_HEADER);
+  if (skipHeader === 'true') {
+      const skippedTitle = r.headers.get(SEARCH_SKIP_TITLE_HEADER) || cleanedQuery;
+      setSeriesSearchMessage(`Series "${skippedTitle}" already in the library; search skipped.`, 'warning');
+    container.innerHTML = '';
+    return;
+  }
+  setSeriesSearchMessage('');
+  container.innerHTML = '';
+  if (!results.length) {
+    container.innerHTML = '<div class="alert alert-info">No series found.</div>';
+    return;
+  }
+  const list = document.createElement('div');
+  list.className = 'list-group';
+  for (const s of results) {
+    const item = document.createElement('div');
+    item.className = 'list-group-item d-flex justify-content-between align-items-center';
+    const left = document.createElement('div');
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'd-flex align-items-center';
+    if (s.cover_url) {
+      const coverIcon = makeCoverIcon(s.cover_url);
+      if (coverIcon) titleDiv.appendChild(coverIcon);
+    }
+    const titleEl = document.createElement(s.url && (s.url.startsWith('http://') || s.url.startsWith('https://')) ? 'a' : 'span');
+    titleEl.textContent = s.title;
+    if (titleEl.tagName === 'A') {
+      titleEl.href = s.url;
+      titleEl.target = '_blank';
+      titleEl.rel = 'noreferrer noopener';
+    }
+    const strong = document.createElement('strong');
+    strong.appendChild(titleEl);
+    titleDiv.appendChild(strong);
+    left.appendChild(titleDiv);
+    const titleNorm = normalizeTitle(s.title);
+    const isKnown = (s.asin && knownAsins.has((s.asin || '').toLowerCase())) ||
+            (s.title && knownTitles.has((s.title || '').toLowerCase())) ||
+            (titleNorm && knownTitlesNormalized.has(titleNorm));
+    if (isKnown) {
+      const badge = document.createElement('span');
+      badge.className = 'badge bg-secondary ms-2';
+      badge.textContent = 'Already in library';
+      left.appendChild(badge);
+    }
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm btn-outline-primary';
+    btn.textContent = 'Add';
+    if (isKnown) {
+      btn.disabled = true;
+      btn.classList.remove('btn-outline-primary');
+      btn.classList.add('btn-outline-secondary');
+    }
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = 'Adding...';
+      await fetch(apiPath('/api/library'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: s.title, asin: s.asin || null, url: s.url || null }) });
+      await Promise.all([fetchLibrary(), loadKnownSeries()]);
+      // Clear search results
+      container.innerHTML = '';
+      document.getElementById('seriesSearchForm').reset();
+    };
+    item.appendChild(left);
+    item.appendChild(btn);
+    list.appendChild(item);
+  }
+  container.appendChild(list);
+  initCoverTooltips();
+}
+
+async function bulkSearchSeries(queries) {
+  const container = document.getElementById('seriesResults');
+  if (!container) return;
+  setSeriesSearchMessage('');
+  container.innerHTML = '<div class="alert alert-info">Searching...</div>';
+
+  const allResults = [];
+  const seenAsins = new Set();
+  const seenTitles = new Set();
+  let skippedCount = 0;
+  const skippedTitles = [];
+
+  for (const rawQuery of queries) {
+    const query = (rawQuery || '').trim();
+    if (!query) continue;
+    try {
+      const body = { query };
+      const r = await fetch(apiPath('/api/series/search'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const results = await r.json();
+      const skipHeader = r.headers.get(SEARCH_SKIP_HEADER);
+      if (skipHeader === 'true') {
+        const count = parseInt(r.headers.get(SEARCH_SKIP_COUNT_HEADER) || '1', 10);
+        skippedCount += Number.isNaN(count) ? 1 : count;
+        const skippedTitle = r.headers.get(SEARCH_SKIP_TITLE_HEADER) || query;
+        skippedTitles.push(skippedTitle);
+        continue;
+      }
+      for (const s of results) {
+        const asin = s.asin || '';
+        const title = s.title || '';
+        const titleNorm = normalizeTitle(title);
+        const key = asin || titleNorm;
+        if (!seenAsins.has(asin.toLowerCase()) && !seenTitles.has(titleNorm)) {
+          seenAsins.add(asin.toLowerCase());
+          seenTitles.add(titleNorm);
+          allResults.push(s);
+        }
+      }
+    } catch (e) {
+      console.error(`Error searching for "${query}":`, e);
+    }
+  }
+
+  // Sort by most likely: assuming title alphabetical for now, as "most likely" might mean relevance, but since bulk, sort by title
+  allResults.sort((a, b) => (a.title || '').toLowerCase().localeCompare((b.title || '').toLowerCase()));
+
+  bulkResults = allResults;
+
+  if (skippedCount > 0) {
+    const uniqueTitles = [...new Set(skippedTitles)];
+    const preview = uniqueTitles.slice(0, 3).join(', ');
+    const ellipsis = uniqueTitles.length > 3 ? ', …' : '';
+    setSeriesSearchMessage(`Bulk search skipped ${skippedCount} ${skippedCount === 1 ? 'query' : 'queries'} already matching known series${preview ? ` (${preview}${ellipsis})` : ''}.`, 'warning');
+  } else {
+    setSeriesSearchMessage('');
+  }
+
+  // Show sort controls
+  document.getElementById('bulkSortControls').classList.remove('d-none');
+
+  renderBulkResults(1);
+
+  initCoverTooltips();
+}
+
+function renderBulkResults(page = 1) {
+  const container = document.getElementById('seriesResults');
+  const paginationContainer = document.getElementById('bulkPagination');
+
+  container.innerHTML = '';
+  paginationContainer.innerHTML = '';
+
+  // Sort bulk results
+  const sorted = [...bulkResults].sort((a, b) => {
+    const dir = bulkSortState.dir === 'asc' ? 1 : -1;
+    const av = (a.title || '').toLowerCase();
+    const bv = (b.title || '').toLowerCase();
+    return dir * av.localeCompare(bv);
+  });
+
+  if (!sorted.length) {
+    container.innerHTML = '<div class="alert alert-info">No series found.</div>';
+    return;
+  }
+
+  const itemsPerPage = 10;
+  const totalPages = Math.ceil(sorted.length / itemsPerPage);
+  const currentPage = Math.max(1, Math.min(page, totalPages));
+
+  const start = (currentPage - 1) * itemsPerPage;
+  const end = start + itemsPerPage;
+  const pageItems = sorted.slice(start, end);
+
+  const list = document.createElement('div');
+  list.className = 'list-group';
+
+  for (const s of pageItems) {
+    const item = document.createElement('div');
+    item.className = 'list-group-item d-flex justify-content-between align-items-center';
+    const left = document.createElement('div');
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'd-flex align-items-center';
+    if (s.cover_url) {
+      const coverIcon = makeCoverIcon(s.cover_url);
+      if (coverIcon) titleDiv.appendChild(coverIcon);
+    }
+    const titleEl = document.createElement(s.url && (s.url.startsWith('http://') || s.url.startsWith('https://')) ? 'a' : 'span');
+    titleEl.textContent = s.title;
+    if (titleEl.tagName === 'A') {
+      titleEl.href = s.url;
+      titleEl.target = '_blank';
+      titleEl.rel = 'noreferrer noopener';
+    }
+    const strong = document.createElement('strong');
+    strong.appendChild(titleEl);
+    titleDiv.appendChild(strong);
+    left.appendChild(titleDiv);
+    const titleNorm = normalizeTitle(s.title);
+    const isKnown = (s.asin && knownAsins.has((s.asin || '').toLowerCase())) ||
+            (s.title && knownTitles.has((s.title || '').toLowerCase())) ||
+            (titleNorm && knownTitlesNormalized.has(titleNorm));
+    if (isKnown) {
+      const badge = document.createElement('span');
+      badge.className = 'badge bg-secondary ms-2';
+      badge.textContent = 'Already in library';
+      left.appendChild(badge);
+    }
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm btn-outline-primary';
+    btn.textContent = 'Add';
+    if (isKnown) {
+      btn.disabled = true;
+      btn.classList.remove('btn-outline-primary');
+      btn.classList.add('btn-outline-secondary');
+    }
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = 'Adding...';
+      await fetch(apiPath('/api/library'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: s.title, asin: s.asin || null, url: s.url || null }) });
+      await Promise.all([fetchLibrary(), loadKnownSeries()]);
+      // For bulk search, don't clear results or reset form
+      btn.textContent = 'Added';
+      btn.disabled = true;
+      btn.classList.remove('btn-outline-primary');
+      btn.classList.add('btn-success');
+    };
+    item.appendChild(left);
+    item.appendChild(btn);
+    list.appendChild(item);
+  }
+  container.appendChild(list);
+
+  if (totalPages > 1) {
+    paginationContainer.classList.remove('d-none');
+    const nav = document.createElement('nav');
+    const ul = document.createElement('ul');
+    ul.className = 'pagination pagination-sm mb-0';
+
+    const prevLi = document.createElement('li');
+    prevLi.className = 'page-item' + (currentPage === 1 ? ' disabled' : '');
+    const prevA = document.createElement('a');
+    prevA.className = 'page-link';
+    prevA.href = '#';
+    prevA.textContent = 'Previous';
+    prevA.onclick = (e) => { e.preventDefault(); if (currentPage > 1) renderBulkResults(currentPage - 1); };
+    prevLi.appendChild(prevA);
+    ul.appendChild(prevLi);
+
+    for (let i = 1; i <= totalPages; i++) {
+      const li = document.createElement('li');
+      li.className = 'page-item' + (i === currentPage ? ' active' : '');
+      const a = document.createElement('a');
+      a.className = 'page-link';
+      a.href = '#';
+      a.textContent = i;
+      a.onclick = (e) => { e.preventDefault(); renderBulkResults(i); };
+      li.appendChild(a);
+      ul.appendChild(li);
+    }
+
+    const nextLi = document.createElement('li');
+    nextLi.className = 'page-item' + (currentPage === totalPages ? ' disabled' : '');
+    const nextA = document.createElement('a');
+    nextA.className = 'page-link';
+    nextA.href = '#';
+    nextA.textContent = 'Next';
+    nextA.onclick = (e) => { e.preventDefault(); if (currentPage < totalPages) renderBulkResults(currentPage + 1); };
+    nextLi.appendChild(nextA);
+    ul.appendChild(nextLi);
+
+    nav.appendChild(ul);
+    paginationContainer.appendChild(nav);
+  } else {
+    paginationContainer.classList.add('d-none');
+  }
+
+  initCoverTooltips();
+}
+
+async function loadKnownSeries() {
+  const r = await fetch(apiPath('/api/series/known'));
+  if (!r.ok) return;
+  const allSeries = await r.json();
+
+  const container = document.getElementById('knownSeries');
+  const paginationContainer = document.getElementById('knownSeriesPagination');
+  const searchInput = document.getElementById('knownSeriesSearch');
+  const hideCheckbox = document.getElementById('knownHideOwned');
+  const sortButtons = {
+    title: document.getElementById('knownSortTitle'),
+    book_count: document.getElementById('knownSortBooks'),
+    user_count: document.getElementById('knownSortAdded'),
+  };
+
+  const itemsPerPage = 5;
+  let currentPage = 1;
+  let sortState = { key: 'title', dir: 'asc' };
+
+  const sortLabels = {
+    title: 'A → Z',
+    book_count: 'Book count',
+    user_count: 'Added count',
+  };
+
+  function sortSeries(list) {
+    const dir = sortState.dir === 'asc' ? 1 : -1;
+    return [...list].sort((a, b) => {
+      if (sortState.key === 'book_count') return dir * ((a.book_count || 0) - (b.book_count || 0));
+      if (sortState.key === 'user_count') return dir * ((a.user_count || 0) - (b.user_count || 0));
+      const av = (a.title || '').toLowerCase();
+      const bv = (b.title || '').toLowerCase();
+      return dir * av.localeCompare(bv);
+    });
+  }
+
+  function getFilteredSeries() {
+    const q = (searchInput.value || '').toLowerCase();
+    const hideOwned = hideCheckbox.checked;
+    return allSeries.filter(s => {
+      const matches = !q || (s.title || '').toLowerCase().includes(q);
+      const visible = !hideOwned || !s.in_library;
+      return matches && visible;
+    });
+  }
+
+  function updateSortButtons() {
+    Object.entries(sortButtons).forEach(([key, btn]) => {
+      if (!btn) return;
+      const isActive = sortState.key === key;
+      btn.classList.toggle('btn-secondary', isActive);
+      btn.classList.toggle('btn-outline-secondary', !isActive);
+      btn.textContent = `${sortLabels[key]}${isActive ? (sortState.dir === 'asc' ? ' ▲' : ' ▼') : ''}`;
+    });
+  }
+
+  function renderSeries(page = 1) {
+    container.innerHTML = '';
+    paginationContainer.innerHTML = '';
+
+    const filtered = sortSeries(getFilteredSeries());
+
+    if (!filtered.length) {
+      container.innerHTML = '<div class="alert alert-info">No series found.</div>';
+      return;
+    }
+
+    const totalPages = Math.ceil(filtered.length / itemsPerPage);
+    currentPage = Math.max(1, Math.min(page, totalPages));
+
+    const start = (currentPage - 1) * itemsPerPage;
+    const end = start + itemsPerPage;
+    const pageItems = filtered.slice(start, end);
+
+    const list = document.createElement('div');
+    list.className = 'list-group';
+
+    pageItems.forEach(s => {
+      const item = document.createElement('div');
+      item.className = 'list-group-item d-flex justify-content-between align-items-center';
+      const left = document.createElement('div');
+      const titleDiv = document.createElement('div');
+      // Optional cover icon with tooltip preview
+      if (s.cover) {
+        const icon = document.createElement('img');
+        icon.src = s.cover;
+        icon.alt = 'Cover';
+        icon.className = 'me-2 rounded';
+        icon.style.width = '18px';
+        icon.style.height = '18px';
+        icon.style.objectFit = 'cover';
+        icon.setAttribute('data-bs-toggle', 'tooltip');
+        icon.setAttribute('data-bs-placement', 'right');
+        icon.setAttribute('data-bs-html', 'true');
+        icon.setAttribute('data-bs-custom-class', 'cover-tooltip');
+        icon.setAttribute('title', `<img src="${s.cover}" style="width:180px;height:auto;" />`);
+        titleDiv.appendChild(icon);
+      }
+      const titleEl = document.createElement('strong');
+      titleEl.textContent = s.title;
+      titleDiv.appendChild(titleEl);
+      const countDiv = document.createElement('div');
+      countDiv.className = 'small text-muted';
+      const userPart = typeof s.user_count === 'number' ? ` • added by ${s.user_count} user${s.user_count === 1 ? '' : 's'}` : '';
+      countDiv.textContent = `${s.book_count} book${s.book_count !== 1 ? 's' : ''}${userPart}`;
+      left.appendChild(titleDiv);
+      left.appendChild(countDiv);
+      if (s.in_library) {
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-success';
+        badge.textContent = 'In Library';
+        item.appendChild(left);
+        item.appendChild(badge);
+      } else {
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm btn-outline-primary';
+        btn.textContent = 'Add';
+        btn.onclick = async () => {
+          btn.disabled = true;
+          btn.textContent = 'Adding...';
+          await fetch(apiPath('/api/library'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: s.title, asin: s.asin || null, url: s.url || null, skip_fetch: true }) });
+          await fetchLibrary();
+          // Reload data and stay on current page
+          const r = await fetch(apiPath('/api/series/known'));
+          if (r.ok) {
+            const newSeries = await r.json();
+            allSeries.length = 0;
+            allSeries.push(...newSeries);
+            renderSeries(currentPage);
+          }
+        };
+        item.appendChild(left);
+        item.appendChild(btn);
+      }
+      list.appendChild(item);
+    });
+    container.appendChild(list);
+
+    if (totalPages > 1) {
+      const nav = document.createElement('nav');
+      const ul = document.createElement('ul');
+      ul.className = 'pagination pagination-sm mb-0';
+
+      const prevLi = document.createElement('li');
+      prevLi.className = 'page-item' + (currentPage === 1 ? ' disabled' : '');
+      const prevA = document.createElement('a');
+      prevA.className = 'page-link';
+      prevA.href = '#';
+      prevA.textContent = 'Previous';
+      prevA.onclick = (e) => { e.preventDefault(); if (currentPage > 1) renderSeries(currentPage - 1); };
+      prevLi.appendChild(prevA);
+      ul.appendChild(prevLi);
+
+      for (let i = 1; i <= totalPages; i++) {
+        const li = document.createElement('li');
+        li.className = 'page-item' + (i === currentPage ? ' active' : '');
+        const a = document.createElement('a');
+        a.className = 'page-link';
+        a.href = '#';
+        a.textContent = i;
+        a.onclick = (e) => { e.preventDefault(); renderSeries(i); };
+        li.appendChild(a);
+        ul.appendChild(li);
+      }
+
+      const nextLi = document.createElement('li');
+      nextLi.className = 'page-item' + (currentPage === totalPages ? ' disabled' : '');
+      const nextA = document.createElement('a');
+      nextA.className = 'page-link';
+      nextA.href = '#';
+      nextA.textContent = 'Next';
+      nextA.onclick = (e) => { e.preventDefault(); if (currentPage < totalPages) renderSeries(currentPage + 1); };
+      nextLi.appendChild(nextA);
+      ul.appendChild(nextLi);
+
+      nav.appendChild(ul);
+      paginationContainer.appendChild(nav);
+    }
+    // Initialize tooltips for cover icons
+    initCoverTooltips();
+  }
+
+  searchInput.oninput = () => renderSeries(1);
+  hideCheckbox.onchange = () => renderSeries(1);
+
+  Object.entries(sortButtons).forEach(([key, btn]) => {
+    if (!btn) return;
+    btn.onclick = () => {
+      if (sortState.key === key) {
+        sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortState = { key, dir: key === 'title' ? 'asc' : 'desc' };
+      }
+      updateSortButtons();
+      renderSeries(1);
+    };
+  });
+
+  updateSortButtons();
+  renderSeries(1);
+}
+
+// Toggle bulk search UI
+const bulkSearchToggle = document.getElementById('bulkSearchToggle');
+const singleQueryInput = document.querySelector('input[name="query"]');
+const bulkQueryTextarea = document.getElementById('bulkQuery');
+if (bulkSearchToggle && singleQueryInput && bulkQueryTextarea) {
+  bulkSearchToggle.addEventListener('change', () => {
+    if (bulkSearchToggle.checked) {
+      singleQueryInput.classList.add('d-none');
+      singleQueryInput.required = false;
+      bulkQueryTextarea.classList.remove('d-none');
+      bulkQueryTextarea.required = true;
+    } else {
+      bulkQueryTextarea.classList.add('d-none');
+      bulkQueryTextarea.required = false;
+      singleQueryInput.classList.remove('d-none');
+      singleQueryInput.required = true;
+    }
+  });
+}
+
+// Bulk sort button
+const bulkSortTitleBtn = document.getElementById('bulkSortTitle');
+if (bulkSortTitleBtn) {
+  bulkSortTitleBtn.onclick = () => {
+    bulkSortState.dir = bulkSortState.dir === 'asc' ? 'desc' : 'asc';
+    bulkSortTitleBtn.textContent = `A → Z${bulkSortState.dir === 'asc' ? ' ▲' : ' ▼'}`;
+    renderBulkResults(1);
+  };
+}
+
+const seriesSearchForm = document.getElementById('seriesSearchForm');
+if (seriesSearchForm) {
+  seriesSearchForm.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const form = ev.target;
+    const isBulk = document.getElementById('bulkSearchToggle').checked;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const originalLabel = submitBtn ? submitBtn.textContent : null;
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = isBulk ? 'Bulk Searching...' : 'Searching...';
+    }
+    try {
+      if (isBulk) {
+        const bulkQuery = form.bulkQuery.value;
+        const queries = bulkQuery.split(/[\n,]+/).map(q => q.trim()).filter(q => q);
+        await bulkSearchSeries(queries);
+      } else {
+        const query = form.query.value;
+        await searchSeries(query, undefined);
+      }
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalLabel || 'Search';
+      }
+    }
+  });
+}
+
+fetchLibrary();
+loadKnownSeries();
+
+document.getElementById('librarySearch').addEventListener('input', renderLibraryTable);
+</script>
+{% endblock %}

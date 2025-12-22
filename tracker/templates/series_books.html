@@ -1,0 +1,279 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex align-items-center mb-3">
+  <button onclick="history.back()" class="btn btn-sm btn-outline-secondary me-2">← Back</button>
+  <h1 class="mb-0">Series Books</h1>
+</div>
+<div class="card">
+  <div class="card-body">
+    <div id="seriesList"></div>
+  </div>
+</div>
+<script>
+async function loadSeries() {
+  const params = new URLSearchParams(window.location.search);
+  const requestedAsin = params.get('asin');
+  const container = document.getElementById('seriesList');
+  
+  if (!requestedAsin) {
+    container.innerHTML = '<div class="alert alert-info">No series specified. Please select a series from the Library or Series admin page.</div>';
+    return;
+  }
+  
+  // Fetch series data directly from database
+  const r = await fetch(apiPath(`/api/series/info/${encodeURIComponent(requestedAsin)}`));
+  if (!r.ok) {
+    container.innerHTML = '<div class="alert alert-warning">Series not found or has no books yet.</div>';
+    return;
+  }
+  
+  const series = await r.json();
+  
+  container.innerHTML = '';
+  if (!series.books || !Array.isArray(series.books) || series.books.length === 0) {
+    container.innerHTML = '<div class="alert alert-info">This series has no books yet.</div>';
+    return;
+  }
+  
+  const list = document.createElement('div');
+  const card = document.createElement('div');
+  card.className = 'card mb-3';
+  
+  const header = document.createElement('div');
+  header.className = 'card-header';
+  const title = document.createElement('h5');
+  title.className = 'mb-0';
+  title.textContent = series.title || 'Unknown Series';
+  if (series.original_title && series.original_title !== series.title) {
+    const original = document.createElement('small');
+    original.className = 'text-muted ms-2';
+    original.textContent = `(${series.original_title})`;
+    title.appendChild(original);
+  }
+  header.appendChild(title);
+  
+  const body = document.createElement('div');
+  body.className = 'card-body';
+  const ul = document.createElement('ul');
+  ul.className = 'list-group list-group-flush';
+  series.books.forEach(b => {
+      const li = document.createElement('li');
+      li.className = 'list-group-item';
+      const hidden = Boolean(b.hidden);
+      if (hidden) {
+        li.classList.add('series-book-hidden');
+      }
+      
+      // Title
+      const titleDiv = document.createElement('div');
+      titleDiv.className = 'mb-2';
+      const titleEl = document.createElement(b.url && (b.url.startsWith('http://') || b.url.startsWith('https://')) ? 'a' : 'strong');
+      if (titleEl.tagName === 'A') {
+        titleEl.href = b.url;
+        titleEl.target = '_blank';
+        titleEl.rel = 'noreferrer noopener';
+        titleEl.className = 'text-decoration-none';
+      }
+      titleEl.textContent = b.title || 'Unknown';
+      const strong = document.createElement('strong');
+      strong.appendChild(titleEl);
+      titleDiv.appendChild(strong);
+      li.appendChild(titleDiv);
+      
+      // Book details
+      const detailsDiv = document.createElement('div');
+      detailsDiv.className = 'small text-muted';
+      const details = [];
+      if (b.asin) details.push(`ASIN: ${b.asin}`);
+      if (b.narrators) details.push(`Narrator: ${b.narrators}`);
+      if (b.release_date) details.push(`Released: ${b.release_date}`);
+      if (b.runtime) {
+        const runtime = typeof b.runtime === 'number' ? b.runtime : parseInt(b.runtime);
+        if (!isNaN(runtime)) {
+          const hours = Math.floor(runtime / 60);
+          const mins = runtime % 60;
+          details.push(`Runtime: ${hours}h ${mins}m`);
+        }
+      }
+      detailsDiv.innerHTML = details.join(' • ');
+      li.appendChild(detailsDiv);
+      
+      // Image
+      if (b.image) {
+        const imgDiv = document.createElement('div');
+        imgDiv.className = 'mt-2';
+        const img = document.createElement('img');
+        img.src = b.image;
+        img.alt = b.title || 'Book cover';
+        img.className = 'img-thumbnail';
+        img.style.maxWidth = '150px';
+        imgDiv.appendChild(img);
+        li.appendChild(imgDiv);
+      }
+
+      const controls = document.createElement('div');
+      controls.className = 'd-flex flex-wrap align-items-center gap-2 mt-2';
+      const hiddenBadge = document.createElement('span');
+      hiddenBadge.className = 'badge bg-warning text-dark';
+      hiddenBadge.textContent = 'Hidden';
+      hiddenBadge.style.display = hidden ? '' : 'none';
+      controls.appendChild(hiddenBadge);
+      const toggleBtn = document.createElement('button');
+      toggleBtn.className = 'btn btn-sm btn-outline-secondary';
+      toggleBtn.textContent = hidden ? 'Show in public lists' : 'Hide from public lists';
+      toggleBtn.onclick = async () => {
+        toggleBtn.disabled = true;
+        try {
+          await updateSeriesBookVisibility(series.asin, b, !hidden);
+          await loadSeries();
+        } catch (err) {
+          console.error(err);
+          toggleBtn.disabled = false;
+        }
+      };
+      controls.appendChild(toggleBtn);
+      li.appendChild(controls);
+      
+      // Raw data (collapsed by default)
+      if (b.raw) {
+        const rawToggle = document.createElement('button');
+        rawToggle.className = 'btn btn-sm btn-link text-muted mt-2 p-0';
+        rawToggle.textContent = 'Show raw data';
+        const searchWrap = document.createElement('div');
+        searchWrap.className = 'mt-2';
+        searchWrap.style.display = 'none';
+        const inputGroup = document.createElement('div');
+        inputGroup.className = 'input-group input-group-sm mb-2';
+        inputGroup.style.maxWidth = '320px';
+        const input = document.createElement('input');
+        input.className = 'form-control';
+        input.placeholder = 'Search JSON';
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'btn btn-outline-secondary';
+        clearBtn.textContent = 'Clear';
+        inputGroup.appendChild(input);
+        inputGroup.appendChild(clearBtn);
+        searchWrap.appendChild(inputGroup);
+        const rawPre = document.createElement('pre');
+        rawPre.className = 'small json-pre p-2 mt-2 rounded';
+        rawPre.style.whiteSpace = 'pre-wrap';
+        rawPre.style.display = 'none';
+        const rawStr = JSON.stringify(b.raw, null, 2);
+        rawPre.dataset.json = rawStr;
+        rawPre.innerHTML = syntaxHighlight(rawStr);
+        rawToggle.onclick = () => {
+          if (rawPre.style.display === 'none') {
+            searchWrap.style.display = '';
+            rawPre.style.display = 'block';
+            rawToggle.textContent = 'Hide raw data';
+          } else {
+            searchWrap.style.display = 'none';
+            rawPre.style.display = 'none';
+            rawToggle.textContent = 'Show raw data';
+          }
+        };
+        input.oninput = () => highlightJson(rawPre, input.value);
+        clearBtn.onclick = () => { input.value=''; highlightJson(rawPre, ''); };
+        li.appendChild(rawToggle);
+        li.appendChild(searchWrap);
+        li.appendChild(rawPre);
+      }
+      
+      ul.appendChild(li);
+  });
+  body.appendChild(ul);
+  card.appendChild(header);
+  card.appendChild(body);
+  list.appendChild(card);
+  container.appendChild(list);
+  try {
+    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.forEach(function (tooltipTriggerEl) { new bootstrap.Tooltip(tooltipTriggerEl); });
+  } catch (e) { /* non-fatal */ }
+}
+
+loadSeries();
+
+function syntaxHighlight(json) {
+  json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+    let cls = 'json-number';
+    if (/^"/.test(match)) {
+      if (/:$/.test(match)) {
+        cls = 'json-key';
+      } else {
+        cls = 'json-string';
+      }
+    } else if (/true|false/.test(match)) {
+      cls = 'json-boolean';
+    } else if (/null/.test(match)) {
+      cls = 'json-null';
+    }
+    return '<span class="' + cls + '">' + match + '</span>';
+  });
+}
+
+async function updateSeriesBookVisibility(seriesAsin, book, hidden) {
+  if (!seriesAsin) {
+    throw new Error('Series ASIN missing');
+  }
+  const payload = { hidden: Boolean(hidden) };
+  if (book.asin) {
+    payload.book_asin = book.asin;
+  } else if (book.title) {
+    payload.title = book.title;
+  } else {
+    throw new Error('Book identifier missing');
+  }
+  const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(seriesAsin)}/books/visibility`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(text || 'Failed to update book visibility');
+  }
+  return resp.json();
+}
+
+function highlightJson(preEl, term) {
+  const src = preEl.dataset.json || '';
+  if (!term) {
+    preEl.innerHTML = syntaxHighlight(src);
+    return;
+  }
+  const html = syntaxHighlight(src);
+  // Rebuild with highlights without breaking tags
+  preEl.innerHTML = html;
+  const walker = document.createTreeWalker(preEl, NodeFilter.SHOW_TEXT, null);
+  const toProcess = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node.nodeValue && node.nodeValue.toLowerCase().includes(term.toLowerCase())) {
+      toProcess.push(node);
+    }
+  }
+  const re = new RegExp(`(${escapeRegex(term)})`, 'gi');
+  toProcess.forEach(node => {
+    const parent = node.parentNode;
+    const parts = node.nodeValue.split(re);
+    const frag = document.createDocumentFragment();
+    parts.forEach(part => {
+      if (re.test(part)) {
+        const mark = document.createElement('mark');
+        mark.textContent = part;
+        frag.appendChild(mark);
+      } else {
+        frag.appendChild(document.createTextNode(part));
+      }
+    });
+    parent.replaceChild(frag, node);
+  });
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+</script>
+{% endblock %}

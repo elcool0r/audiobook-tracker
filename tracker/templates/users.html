@@ -1,0 +1,147 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>User Management</h1>
+<div class="row">
+  <div class="col-md-6">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Add User</h5>
+        <form id="addUserForm">
+          <div class="mb-2"><input class="form-control" name="username" placeholder="Username" required /></div>
+          <div class="mb-2"><input class="form-control" name="password" placeholder="Password" required type="password" /></div>
+          <div class="mb-2">
+            <select class="form-select" name="role">
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <button class="btn btn-primary">Add</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Users</h5>
+        <div id="usersList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+async function loadUsers() {
+  const r = await fetch(apiPath('/api/users'));
+  if (!r.ok) { document.getElementById('usersList').innerHTML = '<div class="alert alert-danger">Forbidden</div>'; return; }
+  const users = await r.json();
+  const container = document.getElementById('usersList');
+  container.innerHTML = '';
+  if (!users.length) { container.innerHTML = '<div class="alert alert-info">No users yet.</div>'; return; }
+  const list = document.createElement('div');
+  list.className = 'list-group';
+  for (const u of users) {
+    const item = document.createElement('div');
+    item.className = 'list-group-item';
+    const row = document.createElement('div');
+    row.className = 'd-flex justify-content-between align-items-center';
+    const left = document.createElement('div');
+    const strong = document.createElement('strong');
+    strong.textContent = u.username;
+    left.appendChild(strong);
+    const badge = document.createElement('span');
+    badge.className = 'badge text-bg-secondary ms-2';
+    badge.textContent = u.role || 'user';
+    left.appendChild(badge);
+    const small = document.createElement('small');
+    small.className = 'text-muted ms-2';
+    small.textContent = `Library items: ${u.library_count || 0}`;
+    left.appendChild(small);
+    row.appendChild(left);
+    const right = document.createElement('div');
+    // Privacy feature removed
+    if (u.username !== 'admin') {
+      const roleBtn = document.createElement('button');
+      roleBtn.className = 'btn btn-sm btn-outline-primary ms-2';
+      roleBtn.textContent = u.role === 'admin' ? 'Demote' : 'Promote';
+      roleBtn.onclick = async () => {
+        const next = u.role === 'admin' ? 'user' : 'admin';
+        await fetch(apiPath(`/api/users/${encodeURIComponent(u.username)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: next }) });
+        loadUsers();
+      };
+      right.appendChild(roleBtn);
+    }
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'btn btn-sm btn-outline-danger ms-2';
+    resetBtn.textContent = 'Reset Password';
+    resetBtn.onclick = async () => {
+      const pwd = generateSecurePassword();
+      await fetch(apiPath(`/api/users/${encodeURIComponent(u.username)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) });
+      showPasswordToast(u.username, pwd);
+    };
+    right.appendChild(resetBtn);
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-sm btn-outline-danger ms-2';
+    delBtn.textContent = 'Delete';
+    delBtn.disabled = u.username === 'admin';
+    delBtn.onclick = async () => {
+      if (!confirm('Delete user ' + u.username + '?')) return;
+      await fetch(apiPath(`/api/users/${encodeURIComponent(u.username)}`), { method: 'DELETE' });
+      loadUsers();
+    };
+    right.appendChild(delBtn);
+    row.appendChild(right);
+    item.appendChild(row);
+    list.appendChild(item);
+  }
+  container.appendChild(list);
+}
+
+document.getElementById('addUserForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  const body = {
+    username: f.username.value,
+    password: f.password.value,
+    role: f.role.value,
+  };
+  const r = await fetch(apiPath('/api/users'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { alert('Error adding user'); return; }
+  f.reset();
+  loadUsers();
+});
+
+loadUsers();
+
+function generateSecurePassword() {
+  const length = 20;
+  const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+[]{};:,.<>?';
+  const array = new Uint32Array(length);
+  window.crypto.getRandomValues(array);
+  let pwd = '';
+  for (let i = 0; i < length; i++) {
+    pwd += charset[array[i] % charset.length];
+  }
+  return pwd;
+}
+
+function showPasswordToast(username, password) {
+  const container = document.getElementById('usersList');
+  const toast = document.createElement('div');
+  toast.className = 'alert alert-info mt-2';
+  toast.innerHTML = `<strong>Password reset for ${username}:</strong> <code style="word-break:break-all;">${password}</code> <button class="btn btn-sm btn-outline-secondary ms-2">Copy</button>`;
+  const copyBtn = toast.querySelector('button');
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(password);
+      copyBtn.textContent = 'Copied!';
+      copyBtn.disabled = true;
+      setTimeout(() => { toast.remove(); }, 4000);
+    } catch (e) {
+      copyBtn.textContent = 'Copy failed';
+    }
+  });
+  container.prepend(toast);
+  setTimeout(() => { try { toast.remove(); } catch(e) {} }, 20000);
+}
+</script>
+{% endblock %}
