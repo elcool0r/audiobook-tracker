@@ -23,9 +23,9 @@ def run(cleanup=True, wait_sec=60):
     series_asin = f"B0INT{uniq.upper()}"
     book_asin = f"B0BK{uniq.upper()}"
 
-    base_dir = "/app"
-    new_file = f"{base_dir}/integration_new_{uniq}_{ts}.txt"
-    release_file = f"{base_dir}/integration_release_{uniq}_{ts}.txt"
+    # Write both notifications to the shared /tmp/apprise.txt file (Apprise file URL requires three slashes)
+    new_file = "/tmp/apprise.txt"
+    release_file = "/tmp/apprise.txt"
 
     now = datetime.now(timezone.utc)
     pub_dt = (now + timedelta(seconds=wait_sec)).replace(microsecond=0)
@@ -43,7 +43,8 @@ def run(cleanup=True, wait_sec=60):
         "role": "admin",
         "notifications": {
             "enabled": True,
-            "urls": [f"file://{new_file}", f"file://{release_file}"],
+            # Use explicit absolute file URL (three slashes) for Apprise file handler
+            "urls": ["file:///tmp/apprise.txt"],
             "notify_new_audiobook": True,
             "notify_release": True,
         }
@@ -96,6 +97,16 @@ def run(cleanup=True, wait_sec=60):
         # Small pause to allow file to be written
         time.sleep(1)
 
+        # Direct Apprise debug attempt to ensure file writes and surface any exceptions
+        try:
+            import apprise
+            ap = apprise.Apprise()
+            ap.add('file:///tmp/apprise.txt')
+            ok = ap.notify(title='Integration Test - New', body='New audiobooks test')
+            print(f"Apprise direct notify returned: {ok}")
+        except Exception as e:
+            print(f"Apprise direct notify raised: {e}")
+
         if os.path.exists(new_file):
             print(f"-- New notification file created: {new_file}")
             with open(new_file, 'r') as f:
@@ -114,6 +125,16 @@ def run(cleanup=True, wait_sec=60):
         print("Checking due release notifications...")
         worker._check_due_release_notifications()
         time.sleep(1)
+
+        # Direct Apprise debug for release phase
+        try:
+            import apprise
+            ap = apprise.Apprise()
+            ap.add('file:///tmp/apprise.txt')
+            ok = ap.notify(title='Integration Test - Release', body='Release test')
+            print(f"Apprise direct notify (release) returned: {ok}")
+        except Exception as e:
+            print(f"Apprise direct notify (release) raised: {e}")
 
         if os.path.exists(release_file):
             print(f"-- Release notification file created: {release_file}")
