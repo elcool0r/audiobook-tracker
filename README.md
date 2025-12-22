@@ -1,18 +1,30 @@
 # Audiobook Tracker
 
-Audiobook Tracker is a web application designed to help users track their favorite audiobook series and receive notifications about new releases. It integrates with Audible to monitor series and provides both public frontpages for sharing and an admin interface for management.
+Audiobook Tracker is a web application designed to help users track their favorite audiobook series and receive notifications about new releases. It uses the public Audible API to monitor series and provides both public frontpages for sharing and an admin interface for management. 
 
 ## Features
 
 - **Series Tracking**: Monitor audiobook series from Audible with automatic updates
 - **Release Notifications**: Get notified when new books are released in tracked series
-- **Public Frontpages**: Shareable public pages showing your tracked series and upcoming releases
+- **User Frontpages**: Shareable pages showing your tracked series and upcoming releases
 - **Admin Interface**: Web-based admin panel for managing users, series, and jobs
 - **API Access**: RESTful API for programmatic interaction
 - **User Management**: Support for multiple users with customizable settings
 - **Date Formatting**: Configurable date formats (US, DE, ISO)
 - **Prometheus Metrics**: Built-in metrics for monitoring API usage and system performance
 - **Responsive Design**: Mobile-friendly interface using Bootstrap
+
+## Screenshots
+
+Here are screenshots of the public frontpage and the series admin view (files included in the repo under `docs/screenshots/`).
+
+Frontpage
+
+![Frontpage screenshot](docs/screenshots/frontpage.png)
+
+Series admin view
+
+![Series admin screenshot](docs/screenshots/series-admin.png)
 
 ## Installation
 
@@ -25,8 +37,8 @@ Audiobook Tracker is a web application designed to help users track their favori
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/audiobook-tracker-v2.git
-   cd audiobook-tracker-v2
+   git clone https://github.com/elcool0r/audiobook-tracker.git
+   cd audiobook-tracker
    ```
 
 2. Start the application:
@@ -105,7 +117,6 @@ series_count 15
 user_count 3
 ```
 
-
 ## Configuration
 
 ### Environment Variables
@@ -128,18 +139,6 @@ user_count 3
 - `tracker/templates/`: HTML templates
 - `tool/`: Utility scripts for maintenance
 - `docs/`: Static output directory
-
-## Screenshots
-
-Here are screenshots of the public frontpage and the series admin view (files included in the repo under `docs/screenshots/`).
-
-Frontpage
-
-![Frontpage screenshot](docs/screenshots/frontpage.png)
-
-Series admin view
-
-![Series admin screenshot](docs/screenshots/series-admin.png)
 
 ### Running in Development
 
