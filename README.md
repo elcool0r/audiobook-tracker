@@ -1,4 +1,4 @@
-# Audiobook Tracker v2
+# Audiobook Tracker
 
 Audiobook Tracker is a web application designed to help users track their favorite audiobook series and receive notifications about new releases. It integrates with Audible to monitor series and provides both public frontpages for sharing and an admin interface for management.
 
@@ -128,6 +128,18 @@ user_count 3
 - `tracker/templates/`: HTML templates
 - `tool/`: Utility scripts for maintenance
 - `docs/`: Static output directory
+
+## Screenshots
+
+Here are screenshots of the public frontpage and the series admin view (files included in the repo under `docs/screenshots/`).
+
+Frontpage
+
+![Frontpage screenshot](docs/screenshots/frontpage.png)
+
+Series admin view
+
+![Series admin screenshot](docs/screenshots/series-admin.png)
 
 ### Running in Development
 
