@@ -495,26 +495,6 @@ async function loadSeries() {
         const devRow = document.createElement('div');
         devRow.className = 'd-flex flex-wrap align-items-center gap-2';
 
-        const markNewBtn = document.createElement('button');
-        markNewBtn.className = 'btn btn-sm btn-outline-success';
-        markNewBtn.textContent = 'Mark as new';
-        markNewBtn.onclick = async () => {
-          markNewBtn.disabled = true;
-          markNewBtn.textContent = 'Triggering...';
-          setDevFeedback(devStatus, '', false);
-          try {
-            await markBookAsNew(series.asin, b);
-            setDevFeedback(devStatus, 'Notification queued', false);
-          } catch (err) {
-            console.error(err);
-            setDevFeedback(devStatus, err?.message || 'Failed to queue notification', true);
-          } finally {
-            markNewBtn.disabled = false;
-            markNewBtn.textContent = 'Mark as new';
-          }
-        };
-        devRow.appendChild(markNewBtn);
-
         // Developer helper: set publication datetime to now (UTC) and clear release notification flag
         const pubSetBtn = document.createElement('button');
         pubSetBtn.className = 'btn btn-sm btn-outline-primary';
