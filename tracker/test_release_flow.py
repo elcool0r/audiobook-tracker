@@ -187,3 +187,101 @@ class TestReleaseFlow:
         for p in (new_file, release_file):
             if os.path.exists(p):
                 os.remove(p)
+
+    def test_background_new_audiobook_notifications(self):
+        base_dir = _get_base_dir()
+
+        test_username = "admin"
+        test_series_asin = "B0FLOWTESTX"
+        test_series_title = "Background Flow"
+
+        initial_book = {
+            "asin": "B0BGINITIAL",
+            "title": "Initial Book",
+            "release_date": "2023-01-01",
+        }
+
+        new_book = {
+            "asin": "B0BGSPOIL",
+            "title": "Background Splash",
+            "publication_datetime": "2025-12-24T00:00:00Z",
+            "image": "https://example.com/bg_cover.jpg",
+        }
+
+        initial_series_doc = {
+            "_id": test_series_asin,
+            "title": test_series_title,
+            "books": [initial_book],
+            "fetched_at": datetime.now(timezone.utc).isoformat() + "Z",
+        }
+
+        series_with_new = dict(initial_series_doc)
+        series_with_new["books"] = [initial_book, new_book]
+
+        library_entry = {
+            "_id": "lib_flow_bg",
+            "username": test_username,
+            "series_asin": test_series_asin,
+            "notified_new_asins": [],
+        }
+
+        mock_user = {
+            "username": test_username,
+            "role": "admin",
+            "notifications": {
+                "enabled": True,
+                "urls": [f"file://{base_dir}/bg_new.txt"],
+                "notify_new_audiobook": True,
+                "notify_release": False,
+            },
+        }
+
+        new_file = f"{base_dir}/bg_new.txt"
+        if os.path.exists(new_file):
+            os.remove(new_file)
+
+        with patch('tracker.tasks.get_users_collection') as mock_get_users, \
+             patch('tracker.tasks.get_user_library_collection') as mock_get_library, \
+             patch('tracker.tasks.get_series_collection') as mock_get_series, \
+             patch('apprise.Apprise') as mock_apprise_class:
+
+            mock_users_col = MagicMock()
+            mock_library_col = MagicMock()
+            mock_series_col = MagicMock()
+
+            mock_get_users.return_value = mock_users_col
+            mock_get_library.return_value = mock_library_col
+            mock_get_series.return_value = mock_series_col
+
+            mock_users_col.find_one.return_value = mock_user
+            mock_library_col.find.return_value = [library_entry]
+            mock_series_col.find_one.return_value = initial_series_doc
+
+            mock_apprise = MagicMock()
+            mock_apprise_class.return_value = mock_apprise
+
+            def mock_notify(**kwargs):
+                with open(new_file, 'w') as fh:
+                    fh.write(kwargs.get('body', ''))
+                return True
+
+            mock_apprise.notify.side_effect = mock_notify
+
+            worker = TaskWorker()
+
+            worker._check_new_audiobook_notifications()
+            assert not mock_apprise.notify.called, "Initial sync should not trigger a notification"
+            assert mock_library_col.update_one.call_count >= 1
+
+            library_entry["notified_new_asins"] = [initial_book["asin"]]
+            library_entry["notified_new_asins_initialized"] = True
+            mock_series_col.find_one.return_value = series_with_new
+
+            worker._check_new_audiobook_notifications()
+            assert os.path.exists(new_file), "Background new-audiobook notification file missing"
+            with open(new_file, 'r') as fh:
+                body = fh.read()
+            assert new_book["title"] in body
+
+        if os.path.exists(new_file):
+            os.remove(new_file)

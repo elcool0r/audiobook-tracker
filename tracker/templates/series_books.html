@@ -4,12 +4,18 @@
   <button onclick="history.back()" class="btn btn-sm btn-outline-secondary me-2">← Back</button>
   <h1 class="mb-0">Series Books</h1>
 </div>
+{% if settings.developer_mode and user.role == 'admin' %}
+<div class="alert alert-warning small">Developer mode is active — additional testing controls are visible below for each book.</div>
+{% endif %}
 <div class="card">
   <div class="card-body">
     <div id="seriesList"></div>
   </div>
 </div>
 <script>
+const developerModeEnabled = {{ 'true' if settings.developer_mode else 'false' }};
+const isAdminUser = {{ 'true' if user.role == 'admin' else 'false' }};
+const showDeveloperControls = developerModeEnabled && isAdminUser;
 async function loadSeries() {
   const params = new URLSearchParams(window.location.search);
   const requestedAsin = params.get('asin');
@@ -133,6 +139,100 @@ async function loadSeries() {
       };
       controls.appendChild(toggleBtn);
       li.appendChild(controls);
+
+      if (showDeveloperControls && series.asin) {
+        const devSection = document.createElement('div');
+        devSection.className = 'developer-controls border-top pt-3 mt-3';
+        const devRow = document.createElement('div');
+        devRow.className = 'd-flex flex-wrap align-items-center gap-2';
+
+        const markNewBtn = document.createElement('button');
+        markNewBtn.className = 'btn btn-sm btn-outline-success';
+        markNewBtn.textContent = 'Mark as new';
+        markNewBtn.onclick = async () => {
+          markNewBtn.disabled = true;
+          markNewBtn.textContent = 'Triggering...';
+          setDevFeedback(devStatus, '', false);
+          try {
+            await markBookAsNew(series.asin, b);
+            setDevFeedback(devStatus, 'Notification queued', false);
+          } catch (err) {
+            console.error(err);
+            setDevFeedback(devStatus, err?.message || 'Failed to queue notification', true);
+          } finally {
+            markNewBtn.disabled = false;
+            markNewBtn.textContent = 'Mark as new';
+          }
+        };
+        devRow.appendChild(markNewBtn);
+
+        const pubInputGroup = document.createElement('div');
+        pubInputGroup.className = 'input-group input-group-sm';
+        pubInputGroup.style.maxWidth = '260px';
+        const pubInput = document.createElement('input');
+        pubInput.className = 'form-control';
+        pubInput.placeholder = '2025-12-01T23:14:00Z';
+        pubInput.value = getBookPublicationDatetime(b);
+        pubInput.setAttribute('aria-label', 'Publication datetime in UTC ISO 8601 (e.g., 2025-12-01T23:14:00Z)');
+        const pubBtn = document.createElement('button');
+        pubBtn.className = 'btn btn-outline-primary';
+        pubBtn.textContent = 'Save';
+        pubBtn.onclick = async () => {
+          pubBtn.disabled = true;
+          pubBtn.textContent = 'Saving...';
+          setDevFeedback(devStatus, '', false);
+          try {
+            await updatePublicationDatetime(series.asin, b, pubInput.value.trim() || null);
+            setDevFeedback(devStatus, 'Publication datetime saved', false);
+            await loadSeries();
+          } catch (err) {
+            console.error(err);
+            setDevFeedback(devStatus, err?.message || 'Failed to update datetime', true);
+          } finally {
+            pubBtn.disabled = false;
+            pubBtn.textContent = 'Save';
+          }
+        };
+        pubInputGroup.appendChild(pubInput);
+        pubInputGroup.appendChild(pubBtn);
+        devRow.appendChild(pubInputGroup);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn btn-sm btn-outline-danger';
+        deleteBtn.textContent = 'Delete book';
+        deleteBtn.onclick = async () => {
+          if (!confirm('Delete this book from the cached list? Refreshing will re-fetch it from the source.')) {
+            return;
+          }
+          deleteBtn.disabled = true;
+          deleteBtn.textContent = 'Deleting...';
+          setDevFeedback(devStatus, '', false);
+          try {
+            await deleteSeriesBook(series.asin, b);
+            setDevFeedback(devStatus, 'Book deleted (refreshing)...', false);
+            await loadSeries();
+          } catch (err) {
+            console.error(err);
+            setDevFeedback(devStatus, err?.message || 'Failed to delete book', true);
+          } finally {
+            deleteBtn.disabled = false;
+            deleteBtn.textContent = 'Delete book';
+          }
+        };
+        devRow.appendChild(deleteBtn);
+
+        const devStatus = document.createElement('small');
+        devStatus.className = 'text-muted d-block mt-2';
+        devStatus.style.minHeight = '1.2em';
+        devStatus.style.display = 'none';
+        devSection.appendChild(devRow);
+        const pubHelper = document.createElement('small');
+        pubHelper.className = 'form-text text-muted mt-2';
+        pubHelper.textContent = 'Provide a UTC ISO 8601 timestamp (e.g., 2025-12-01T23:14:00Z); values are stored verbatim without locale conversion.';
+        devSection.appendChild(pubHelper);
+        devSection.appendChild(devStatus);
+        li.appendChild(devSection);
+      }
       
       // Raw data (collapsed by default)
       if (b.raw) {
@@ -235,6 +335,80 @@ async function updateSeriesBookVisibility(seriesAsin, book, hidden) {
     throw new Error(text || 'Failed to update book visibility');
   }
   return resp.json();
+}
+
+async function markBookAsNew(seriesAsin, book) {
+  return developerRequest('POST', `/api/developer/series/${encodeURIComponent(seriesAsin)}/books/mark-new`, bookPayload(book));
+}
+
+async function updatePublicationDatetime(seriesAsin, book, datetime) {
+  return developerRequest('POST', `/api/developer/series/${encodeURIComponent(seriesAsin)}/books/update-publication`, {
+    ...bookPayload(book),
+    publication_datetime: datetime,
+  });
+}
+
+async function deleteSeriesBook(seriesAsin, book) {
+  return developerRequest('DELETE', `/api/developer/series/${encodeURIComponent(seriesAsin)}/books`, bookPayload(book));
+}
+
+function bookPayload(book) {
+  return {
+    book_asin: book.asin || null,
+    title: book.title || null,
+  };
+}
+
+function getBookPublicationDatetime(book) {
+  if (!book) {
+    return '';
+  }
+  const value = book.publication_datetime;
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim();
+  }
+  const releaseDate = book.release_date;
+  if (typeof releaseDate === 'string' && releaseDate.trim()) {
+    const trimmed = releaseDate.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return `${trimmed}T00:00:00Z`;
+    }
+    return trimmed;
+  }
+  return '';
+}
+
+async function developerRequest(method, path, payload) {
+  const options = { method, headers: { 'Content-Type': 'application/json' } };
+  if (payload !== undefined) {
+    options.body = JSON.stringify(payload);
+  }
+  const resp = await fetch(apiPath(path), options);
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(text || 'Developer request failed');
+  }
+  return resp.json();
+}
+
+function setDevFeedback(el, message, isError = false) {
+  if (!el) {
+    return;
+  }
+  if (!message) {
+    el.style.display = 'none';
+    el.textContent = '';
+    el.classList.remove('text-success', 'text-danger');
+    el.classList.add('text-muted');
+    return;
+  }
+  el.style.display = '';
+  el.textContent = message;
+  el.classList.toggle('text-danger', !!isError);
+  el.classList.toggle('text-success', !!message && !isError);
+  if (!isError) {
+    el.classList.remove('text-danger');
+  }
 }
 
 function highlightJson(preEl, term) {

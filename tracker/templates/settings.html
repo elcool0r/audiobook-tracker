@@ -47,6 +47,17 @@
   </div>
 
   <div class="card mb-3">
+    <div class="card-header">Developer Mode</div>
+    <div class="card-body">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" name="developer_mode" id="developerModeToggle" {% if settings.developer_mode %}checked{% endif %} />
+        <label class="form-check-label" for="developerModeToggle">Enable developer mode</label>
+      </div>
+      <div class="form-text">Enabling this reveals developer-only testing controls (notifications, book edits, duplication) across the admin interface.</div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
     <div class="card-header">Proxy Settings</div>
     <div class="card-body">
       <div class="form-check form-switch mb-3">
@@ -161,6 +172,7 @@ async function loadSettings() {
     document.querySelector('[name=allow_non_admin_series_search]').checked = currentSettings.allow_non_admin_series_search || false;
     // skip_known_series_search: default ON unless explicitly false
     document.querySelector('[name=skip_known_series_search]').checked = currentSettings.skip_known_series_search !== false;
+    document.querySelector('[name=developer_mode]').checked = !!currentSettings.developer_mode;
     syncProxyFields();
   }
 }
@@ -182,6 +194,7 @@ form.addEventListener('submit', async (ev) => {
     allow_non_admin_series_search: form.allow_non_admin_series_search.checked || false,
     skip_known_series_search: form.skip_known_series_search.checked || false,
     debug_logging: form.debug_logging.checked || false,
+    developer_mode: form.developer_mode.checked || false,
     proxy_enabled: form.proxy_enabled.checked || false,
     proxy_url: form.proxy_url.value || null,
     proxy_username: form.proxy_username.value || null,

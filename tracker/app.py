@@ -556,7 +556,8 @@ def create_app() -> FastAPI:
 
     @app.get(_p("/series-books"), response_class=HTMLResponse)
     async def series_books_page(request: Request, user=Depends(get_current_user)):
-        return templates.TemplateResponse("series_books.html", {"request": request, "user": user})
+        settings = load_settings()
+        return templates.TemplateResponse("series_books.html", {"request": request, "user": user, "settings": settings})
 
     @app.get(_p("/users"), response_class=HTMLResponse)
     async def users_page(request: Request, user=Depends(get_admin_user)):
@@ -568,7 +569,8 @@ def create_app() -> FastAPI:
 
     @app.get(_p("/series-admin"), response_class=HTMLResponse)
     async def series_admin_page(request: Request, user=Depends(get_admin_user)):
-        return templates.TemplateResponse("series_admin.html", {"request": request, "user": user})
+        settings = load_settings()
+        return templates.TemplateResponse("series_admin.html", {"request": request, "user": user, "settings": settings})
 
     @app.get(_p("/jobs"), response_class=HTMLResponse)
     async def jobs_page(request: Request, user=Depends(get_admin_user)):

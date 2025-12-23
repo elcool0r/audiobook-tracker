@@ -6,6 +6,7 @@ from pydantic import BaseModel, constr, Field
 from typing import Dict, Any, List
 import re
 import logging
+import copy
 from math import ceil
 
 from .auth import get_current_user
@@ -84,6 +85,7 @@ class SettingsSaveRequest(BaseModel):
     proxy_password: str | None = None
     default_frontpage_slug: str | None = None
     debug_logging: bool | None = None
+    developer_mode: bool | None = None
 
 
 class SeriesBookVisibilityRequest(BaseModel):
@@ -94,6 +96,19 @@ class SeriesBookVisibilityRequest(BaseModel):
 
 class SeriesTitleUpdateRequest(BaseModel):
     title: str
+
+
+class DeveloperSeriesBookActionRequest(BaseModel):
+    book_asin: str | None = None
+    title: str | None = None
+
+
+class DeveloperSeriesBookDatetimeRequest(DeveloperSeriesBookActionRequest):
+    publication_datetime: str | None = None
+
+
+class DeveloperSeriesDuplicateRequest(BaseModel):
+    target_asin: str
 
 
 @api_router.post("/search")
@@ -171,6 +186,7 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
         skip_known_series_search=payload.skip_known_series_search if payload.skip_known_series_search is not None else current.skip_known_series_search,
         default_frontpage_slug=slug,
         debug_logging=payload.debug_logging if payload.debug_logging is not None else current.debug_logging,
+        developer_mode=payload.developer_mode if payload.developer_mode is not None else current.developer_mode,
     )
     save_settings(updated)
     try:
@@ -623,6 +639,249 @@ async def api_series_book_visibility(asin: str, payload: SeriesBookVisibilityReq
     return {"matched": matched, "hidden": payload.hidden}
 
 
+def _clear_series_notification_history(series_asin: str, book_asin: str | None):
+    if not book_asin:
+        return
+    try:
+        lib_col = get_user_library_collection()
+        lib_col.update_many(
+            {"series_asin": series_asin},
+            {
+                "$pull": {
+                    "notified_new_asins": book_asin,
+                    "notified_releases": book_asin,
+                }
+            },
+        )
+    except Exception:
+        pass
+
+
+def _send_developer_notification_to_user(username: str | None, title: str, body: str, attaches: list[str] | None = None) -> bool:
+    if not username:
+        return False
+    user_doc = get_users_collection().find_one({"username": username}) or {}
+    notif = user_doc.get("notifications", {})
+    urls = [u for u in (notif.get("urls") or []) if isinstance(u, str) and u.strip()]
+    if not urls:
+        return False
+    try:
+        import apprise
+        ap = apprise.Apprise()
+        for url in urls:
+            ap.add(url)
+        if attaches:
+            ap.notify(title=title, body=body, attach=attaches)
+        else:
+            ap.notify(title=title, body=body)
+        return True
+    except Exception as exc:
+        logger.exception("Developer notification failed for %s", username)
+        return False
+
+@api_router.post("/developer/series/{asin}/books/mark-new")
+async def api_developer_mark_book_new(asin: str, payload: DeveloperSeriesBookActionRequest, user=Depends(get_current_user)):
+    _require_developer_mode(user)
+    series_col = get_series_collection()
+    doc = series_col.find_one({"_id": asin})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Series not found")
+    books = doc.get("books", []) if isinstance(doc.get("books"), list) else []
+    matched_book = None
+    old_books = []
+    for book in books:
+        if matched_book is None and _book_matches(book, payload.book_asin, payload.title):
+            matched_book = book
+            continue
+        old_books.append(book)
+    if not matched_book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    if not old_books:
+        old_books = [{"asin": "__dev_sentinel__"}]
+    matched_book_asin = matched_book.get("asin") if isinstance(matched_book, dict) else None
+    _clear_series_notification_history(asin, matched_book_asin)
+    release_job_recorded = worker._send_series_notifications(asin, doc, old_books, books)
+    username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
+    if not release_job_recorded:
+        series_title = doc.get("title") or doc.get("original_title") or f"Series {asin}"
+        pending_asins = [matched_book_asin] if matched_book_asin else []
+        body = f"Developer triggered notification for '{matched_book.get('title') or matched_book_asin or 'book'}' in '{series_title}'."
+        worker._record_release_job(
+            username=username,
+            asin=asin,
+            series_title=series_title,
+            pending_asins=pending_asins,
+            body=body,
+            success=True,
+            error=None,
+        )
+        image_url = None
+        if isinstance(matched_book, dict):
+            image_val = matched_book.get("image")
+            if isinstance(image_val, str) and image_val:
+                image_url = image_val
+        _send_developer_notification_to_user(
+            username,
+            f"Developer notification for {series_title}",
+            body,
+            [image_url] if image_url else None,
+        )
+    return {"status": "notification_queued", "book_asin": matched_book.get("asin"), "book_title": matched_book.get("title")}
+
+
+@api_router.post("/developer/series/{asin}/books/update-publication")
+async def api_developer_update_publication_datetime(
+    asin: str,
+    payload: DeveloperSeriesBookDatetimeRequest,
+    user=Depends(get_current_user),
+):
+    _require_developer_mode(user)
+    if not payload.book_asin and not payload.title:
+        raise HTTPException(status_code=400, detail="Book identifier required")
+    series_col = get_series_collection()
+    doc = series_col.find_one({"_id": asin})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Series not found")
+    books = doc.get("books", []) if isinstance(doc.get("books"), list) else []
+    original_books = copy.deepcopy(books)
+    updated = False
+    matched_book = None
+    new_books = []
+    for book in books:
+        if not updated and _book_matches(book, payload.book_asin, payload.title):
+            new_book = dict(book)
+            new_book["publication_datetime"] = payload.publication_datetime if payload.publication_datetime else None
+            matched_book = new_book
+            new_books.append(new_book)
+            updated = True
+            continue
+        new_books.append(book)
+    if not matched_book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    matched_book_asin = matched_book.get("asin") if isinstance(matched_book, dict) else None
+    cover_image = _select_cover_image(new_books)
+    series_col.update_one({"_id": asin}, {"$set": {"books": new_books, "cover_image": cover_image}})
+    doc["books"] = new_books
+    release_job_recorded = worker._send_series_notifications(asin, doc, original_books, new_books)
+    username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
+    if not release_job_recorded:
+        series_title = doc.get("title") or doc.get("original_title") or f"Series {asin}"
+        pending_asins = [matched_book_asin] if matched_book_asin else []
+        publication_text = payload.publication_datetime or "<cleared>"
+        body = f"Developer updated publication datetime for '{matched_book.get('title') or matched_book_asin or 'book'}' to '{publication_text}' in '{series_title}'."
+        worker._record_release_job(
+            username=username,
+            asin=asin,
+            series_title=series_title,
+            pending_asins=pending_asins,
+            body=body,
+            success=True,
+            error=None,
+        )
+        image_url = None
+        if isinstance(matched_book, dict):
+            image_val = matched_book.get("image")
+            if isinstance(image_val, str) and image_val:
+                image_url = image_val
+        _send_developer_notification_to_user(
+            username,
+            f"Developer publication update for {series_title}",
+            body,
+            [image_url] if image_url else None,
+        )
+    return {
+        "asin": asin,
+        "book_asin": matched_book.get("asin"),
+        "publication_datetime": matched_book.get("publication_datetime"),
+    }
+
+
+@api_router.delete("/developer/series/{asin}/books")
+async def api_developer_delete_series_book(
+    asin: str,
+    payload: DeveloperSeriesBookActionRequest,
+    user=Depends(get_current_user),
+):
+    _require_developer_mode(user)
+    if not payload.book_asin and not payload.title:
+        raise HTTPException(status_code=400, detail="Book identifier required")
+    series_col = get_series_collection()
+    doc = series_col.find_one({"_id": asin})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Series not found")
+    books = doc.get("books", []) if isinstance(doc.get("books"), list) else []
+    new_books = []
+    removed = None
+    for book in books:
+        if removed is None and _book_matches(book, payload.book_asin, payload.title):
+            removed = book
+            continue
+        new_books.append(book)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Book not found")
+    cover_image = _select_cover_image(new_books)
+    series_col.update_one({"_id": asin}, {"$set": {"books": new_books, "cover_image": cover_image}})
+    if isinstance(removed.get("asin"), str):
+        lib_col = get_user_library_collection()
+        lib_col.update_many(
+            {"series_asin": asin},
+            {
+                "$pull": {
+                    "notified_new_asins": removed.get("asin"),
+                    "notified_releases": removed.get("asin"),
+                }
+            },
+        )
+    return {"deleted": True, "book_asin": removed.get("asin"), "title": removed.get("title")}
+
+
+@api_router.post("/developer/series/{asin}/duplicate")
+async def api_developer_duplicate_series(
+    asin: str,
+    payload: DeveloperSeriesDuplicateRequest,
+    user=Depends(get_current_user),
+):
+    _require_developer_mode(user)
+    target = (payload.target_asin or "").strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="Target ASIN is required")
+    if target == asin:
+        raise HTTPException(status_code=400, detail="Target ASIN must differ from source")
+    series_col = get_series_collection()
+    if series_col.find_one({"_id": target}):
+        raise HTTPException(status_code=400, detail="Target ASIN already exists")
+    doc = series_col.find_one({"_id": asin})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Series not found")
+    book_list = doc.get("books")
+    books = copy.deepcopy(book_list) if isinstance(book_list, list) else []
+    source_title = doc.get("title") or doc.get("original_title") or ""
+    duplicate_title = f"{source_title}-copy" if source_title else f"{target}-copy"
+    original_title = doc.get("original_title") or doc.get("title")
+    new_doc = {
+        "_id": target,
+        "title": duplicate_title,
+        "url": doc.get("url"),
+        "books": books,
+        "cover_image": _select_cover_image(books) or doc.get("cover_image"),
+        "fetched_at": doc.get("fetched_at"),
+        "raw": copy.deepcopy(doc.get("raw")) if doc.get("raw") is not None else None,
+        "next_refresh_at": None,
+        "user_count": 0,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "original_title": original_title,
+    }
+    series_col.insert_one(new_doc)
+    return {"status": "ok", "asin": target}
+
+
+@api_router.post("/developer/series/{asin}/probe")
+async def api_developer_schedule_probe(asin: str, user=Depends(get_current_user)):
+    _require_developer_mode(user)
+    job_id = enqueue_refresh_probe(asin, response_groups=None, source="developer")
+    return {"job_id": job_id}
+
+
 # --- Users endpoints (admin only) ---
 
 
@@ -669,6 +928,39 @@ class JobListResponse(BaseModel):
 def _require_admin(user):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def _require_developer_mode(user):
+    _require_admin(user)
+    settings = load_settings()
+    if not getattr(settings, "developer_mode", False):
+        raise HTTPException(status_code=403, detail="Developer mode disabled")
+
+
+def _book_matches(book: Dict[str, Any] | None, book_asin: str | None, title: str | None) -> bool:
+    if not isinstance(book, dict):
+        return False
+    if book_asin:
+        return book.get("asin") == book_asin
+    if title:
+        if not isinstance(book.get("title"), str):
+            return False
+        return book.get("title").strip().lower() == title.strip().lower()
+    return False
+
+
+def _select_cover_image(books: list | None) -> str | None:
+    if not isinstance(books, list):
+        return None
+    for book in books:
+        if not isinstance(book, dict):
+            continue
+        if book.get("hidden"):
+            continue
+        image = book.get("image")
+        if image:
+            return image
+    return None
 
 
 @api_router.get("/users")

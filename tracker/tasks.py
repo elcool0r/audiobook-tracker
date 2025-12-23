@@ -300,6 +300,7 @@ class TaskWorker:
                     new_asins = list(cur_asins - old_asins)
                 except Exception:
                     new_asins = []
+                new_book_added = bool(new_asins)
 
                 # Send notifications when we fetched full data (or had no books before)
                 if changed or not old_books:
@@ -309,7 +310,7 @@ class TaskWorker:
                         pass
 
                 # A probe is considered to have 'changed' if new audiobooks were discovered or this is the first time we have books
-                final_changed = bool(new_asins) or (not old_books and bool(books_current))
+                final_changed = new_book_added or (not old_books and bool(books_current))
 
                 # Schedule next refresh at least one full cycle in the future for both the probed ASIN and its parent
                 try:
@@ -320,7 +321,14 @@ class TaskWorker:
                 except Exception:
                     pass
                 if job_id:
-                    self._finish_job(job_id, {"book_count": len(books_current), "changed": bool(final_changed)})
+                    self._finish_job(
+                        job_id,
+                        {
+                            "book_count": len(books_current),
+                            "changed": bool(final_changed),
+                            "new_book": new_book_added,
+                        },
+                    )
             except Exception as inner_exc:
                 if settings and getattr(settings, "debug_logging", False):
                     logging.exception(f"refresh_series_probe failed for {asin}: {inner_exc}")
@@ -373,11 +381,12 @@ class TaskWorker:
                 time.sleep(1)
 
     def _release_notifier_run(self):
-        """Periodic loop to send release notifications at the exact publication time, independent of refresh cadence."""
+        """Periodic loop to send release and new-audiobook notifications independent of refresh cadence."""
         import time
         while not self._stop.is_set():
             try:
                 self._check_due_release_notifications()
+                self._check_new_audiobook_notifications()
             except Exception:
                 pass
             for _ in range(self._release_check_interval_sec):
@@ -390,6 +399,29 @@ class TaskWorker:
         col.update_one({"_id": ObjectId(job_id)}, {"$set": {"status": "done", "result": result, "finished_at": _now_iso()}}, upsert=True)
 
     def _record_release_job(self, *, username: str | None, asin: str | None, series_title: str, pending_asins: list[str], body: str, success: bool, error: str | None):
+        self._record_notification_job(
+            job_type="release_notification",
+            username=username,
+            asin=asin,
+            series_title=series_title,
+            pending_asins=pending_asins,
+            body=body,
+            success=success,
+            error=error,
+        )
+
+    def _record_notification_job(
+        self,
+        *,
+        job_type: str,
+        username: str | None,
+        asin: str | None,
+        series_title: str,
+        pending_asins: list[str],
+        body: str,
+        success: bool,
+        error: str | None,
+    ):
         now = _now_iso()
         result: Dict[str, Any] = {
             "notified_asins": list(pending_asins) if pending_asins else [],
@@ -398,10 +430,10 @@ class TaskWorker:
         if error:
             result["error"] = error
         job_doc: Dict[str, Any] = {
-            "type": "release_notification",
+            "type": job_type,
             "username": username,
             "asin": asin,
-            "title": f"Release notifications for {series_title}",
+            "title": f"{job_type.replace('_', ' ').title()} for {series_title}",
             "status": "done" if success else "error",
             "result": result,
             "created_at": now,
@@ -455,8 +487,8 @@ class TaskWorker:
             if not books:
                 continue
 
-            release_candidates = []
             now_date = now.date()
+            release_candidates = []
             for b in books:
                 if not isinstance(b, dict):
                     continue
@@ -466,7 +498,8 @@ class TaskWorker:
                 pub_dt = _publication_datetime_utc(b)
                 if not pub_dt:
                     continue
-                if pub_dt.date() != now_date:
+                day_diff = abs((now_date - pub_dt.date()).days)
+                if day_diff > 1:
                     continue
                 delta_sec = (now - pub_dt).total_seconds()
                 if delta_sec < 0 or delta_sec > self._release_check_interval_sec:
@@ -487,10 +520,10 @@ class TaskWorker:
                 except Exception:
                     return str(dt_val)
 
-            titles = [f"{b.get('title') or b.get('asin')} (release at {_fmt(dt)})" for b, dt in pending]
+            titles = [f"{b.get('title') or b.get('asin')} (released at {_fmt(dt)})" for b, dt in pending]
             pending_asins = [b.get("asin") for b, _ in pending if b.get("asin")]
             series_title = series_doc.get("title") or f"Series {asin}"
-            heading = "Audiobook releasing now" if len(pending) == 1 else "Audiobooks releasing now"
+            heading = "Audiobook released" if len(pending) == 1 else "Audiobooks released"
             body = f"{heading} in '{series_title}':\n- " + "\n- ".join(titles)
 
             send_error = None
@@ -509,10 +542,16 @@ class TaskWorker:
                         attaches.append(img)
                 try:
                     if attaches:
-                        ap.notify(title="Audiobook Release", body=body, attach=attaches)
+                        result = ap.notify(title="Audiobook Release", body=body, attach=attaches)
+                        if not result:
+                            # Retry without attachments if images failed
+                            result = ap.notify(title="Audiobook Release", body=body)
                     else:
-                        ap.notify(title="Audiobook Release", body=body)
-                    send_error = None
+                        result = ap.notify(title="Audiobook Release", body=body)
+                    if not result:
+                        send_error = "Apprise notification failed (all services returned failure)"
+                    else:
+                        send_error = None
                 except Exception as exc:
                     send_error = str(exc)
             finally:
@@ -531,6 +570,129 @@ class TaskWorker:
                     lib_col.update_one({"_id": entry.get("_id")}, {"$addToSet": {"notified_releases": {"$each": pending_asins}}})
                 except Exception:
                     pass
+
+    def _check_new_audiobook_notifications(self):
+        """Send new-audiobook notifications when new ASINs appear even if the user hasn't triggered a refresh."""
+        lib_col = get_user_library_collection()
+        users_col = get_users_collection()
+        series_col = get_series_collection()
+
+        entries = list(lib_col.find({"series_asin": {"$exists": True, "$ne": None}}))
+        if not entries:
+            return
+
+        user_cache: Dict[str, Dict[str, Any]] = {}
+        series_cache: Dict[str, Dict[str, Any]] = {}
+
+        def _get_user(username: str) -> Dict[str, Any]:
+            if username not in user_cache:
+                user_cache[username] = users_col.find_one({"username": username}) or {}
+            return user_cache.get(username) or {}
+
+        def _get_series(asin: str) -> Dict[str, Any]:
+            if asin not in series_cache:
+                series_cache[asin] = series_col.find_one({"_id": asin}) or {}
+            return series_cache.get(asin) or {}
+
+        for entry in entries:
+            username = entry.get("username")
+            asin = entry.get("series_asin")
+            if not username or not asin:
+                continue
+            user_doc = _get_user(username)
+            notif = user_doc.get("notifications", {}) if isinstance(user_doc, dict) else {}
+            enabled = bool(notif.get("enabled", False))
+            notify_new = bool(notif.get("notify_new_audiobook", False))
+            urls = [u for u in notif.get("urls", []) if isinstance(u, str) and u.strip()]
+            if not (enabled and notify_new and urls):
+                continue
+
+            series_doc = _get_series(asin)
+            books = series_doc.get("books") if isinstance(series_doc, dict) else None
+            if not isinstance(books, list) or not books:
+                continue
+
+            book_map: Dict[str, Dict[str, Any]] = {}
+            for b in books:
+                if not isinstance(b, dict):
+                    continue
+                b_asin = b.get("asin")
+                if not b_asin:
+                    continue
+                book_map[b_asin] = b
+            if not book_map:
+                continue
+
+            known_asins = entry.get("notified_new_asins") if isinstance(entry.get("notified_new_asins"), list) else []
+            known_set = {a for a in known_asins if a}
+            pending_asins = []
+            for b in books:
+                if not isinstance(b, dict):
+                    continue
+                asin_val = b.get("asin")
+                if not asin_val or asin_val in known_set:
+                    continue
+                pending_asins.append(asin_val)
+
+            series_title = series_doc.get("title") or f"Series {asin}"
+            initialized = bool(entry.get("notified_new_asins_initialized"))
+
+            if pending_asins and initialized:
+                titles = [book_map[a].get("title") or a for a in pending_asins if a in book_map]
+                body = f"New audiobooks found in '{series_title}':\n- " + "\n- ".join(titles)
+                apprise_error = None
+                try:
+                    import apprise
+                    ap = apprise.Apprise()
+                    for u in urls:
+                        ap.add(u)
+                    attaches = []
+                    for a in pending_asins:
+                        b = book_map.get(a)
+                        img = None
+                        if isinstance(b, dict):
+                            img = b.get('image') or (
+                                isinstance(b.get('product_images'), dict) and next(iter(b.get('product_images').values()))
+                            )
+                        if img:
+                            attaches.append(img)
+                    if attaches:
+                        result = ap.notify(title="New Audiobook(s)", body=body, attach=attaches)
+                        if not result:
+                            # Retry without attachments if images failed
+                            result = ap.notify(title="New Audiobook(s)", body=body)
+                    else:
+                        result = ap.notify(title="New Audiobook(s)", body=body)
+                    if not result:
+                        apprise_error = "Apprise notification failed (all services returned failure)"
+                except Exception as exc:
+                    apprise_error = str(exc)
+                finally:
+                    self._record_notification_job(
+                        job_type="new_audiobook_notification",
+                        username=username,
+                        asin=asin,
+                        series_title=series_title,
+                        pending_asins=list(pending_asins),
+                        body=body,
+                        success=apprise_error is None,
+                        error=apprise_error,
+                    )
+
+            try:
+                entry_id = entry.get("_id")
+                if entry_id is not None:
+                    lib_col.update_one(
+                        {"_id": entry_id},
+                        {
+                            "$set": {
+                                "notified_new_asins": list(book_map.keys()),
+                                "notified_new_asins_initialized": True,
+                            }
+                        },
+                    )
+            except Exception:
+                pass
 
     def _send_series_notifications(self, asin: str, series_doc: Dict[str, Any], old_books: list, books_current: list):
         """Notify users tracking this series about new audiobooks and releases based on their settings.
@@ -557,16 +719,21 @@ class TaskWorker:
                 book_map[asin_val] = b
 
         # Release candidates: publication_datetime (exact UTC) or release_date fallback
+        # Only include books published within ±1 day to avoid stale notifications for months-old releases
         now = _now_dt()
+        now_date = now.date()
 
         release_candidates = []  # list of tuples (book, publication_dt_naive_utc)
+        new_asin_set = set(new_asins)
         for b in (books_current or []):
             asin_val = _get(b, "asin")
-            if not asin_val:
+            if not asin_val or asin_val not in new_asin_set:
                 continue
             pub_dt = _publication_datetime_utc(b)
-            if pub_dt and pub_dt <= now:
-                release_candidates.append((b, pub_dt))
+            if pub_dt:
+                day_diff = abs((now_date - pub_dt.date()).days)
+                if day_diff <= 1 and pub_dt <= now:
+                    release_candidates.append((b, pub_dt))
 
         # Find all users tracking this series
         lib_col = get_user_library_collection()
@@ -612,17 +779,18 @@ class TaskWorker:
 
                 if pending:
                     titles = [
-                        f"{b.get('title') or _get(b, 'asin')} (release at {_fmt(dt)})"
+                        f"{b.get('title') or _get(b, 'asin')} (released at {_fmt(dt)})"
                         for b, dt in pending
                     ]
                     pending_asins = [_get(b, "asin") for b, _ in pending if _get(b, "asin")]
-                    heading = "Audiobook releasing now" if len(pending) == 1 else "Audiobooks releasing now"
+                    heading = "Audiobook released" if len(pending) == 1 else "Audiobooks released"
                     body = f"{heading} in '{series_title}':\n- " + "\n- ".join(titles)
                     to_send_msgs.append(("Audiobook Release", body, pending_asins))
 
             if not to_send_msgs:
                 continue
 
+            new_audiobook_msg = next((msg for msg in to_send_msgs if msg[0] == "New Audiobook(s)"), None)
             release_msg = next((msg for msg in to_send_msgs if msg[0] == "Audiobook Release"), None)
             apprise_error = None
             # Send via Apprise
@@ -644,12 +812,31 @@ class TaskWorker:
                         if img:
                             attaches.append(img)
                     if attaches:
-                        ap.notify(title=title, body=body, attach=attaches)
+                        result = ap.notify(title=title, body=body, attach=attaches)
+                        if not result:
+                            # Retry without attachments if images failed
+                            result = ap.notify(title=title, body=body)
                     else:
-                        ap.notify(title=title, body=body)
+                        result = ap.notify(title=title, body=body)
+                    if not result:
+                        apprise_error = "Apprise notification failed (all services returned failure)"
             except Exception as exc:
                 apprise_error = str(exc)
             finally:
+                # Record job for new audiobook notification
+                if new_audiobook_msg:
+                    pending_asins_for_job = new_audiobook_msg[2] if len(new_audiobook_msg) > 2 else []
+                    self._record_notification_job(
+                        job_type="new_audiobook_notification",
+                        username=username,
+                        asin=asin,
+                        series_title=series_title,
+                        pending_asins=list(pending_asins_for_job),
+                        body=new_audiobook_msg[1],
+                        success=apprise_error is None,
+                        error=apprise_error,
+                    )
+                # Record job for release notification
                 if release_msg:
                     pending_asins_for_job = release_msg[2] if len(release_msg) > 2 else []
                     self._record_release_job(

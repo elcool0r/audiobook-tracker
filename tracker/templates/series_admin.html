@@ -1,6 +1,9 @@
 {% extends 'base.html' %}
 {% block content %}
 <h1 id="seriesAdminTitle">Series</h1>
+{% if settings.developer_mode and user.role == 'admin' %}
+<div class="alert alert-warning small">Developer mode is active — duplication controls are available in the list.</div>
+{% endif %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-3">
   <div class="input-group" style="max-width: 320px;">
     <input id="filter" class="form-control" placeholder="Filter by title" />
@@ -24,6 +27,8 @@
 <script>
 let allSeries = [];
 const userDateFormat = "{{ user.date_format or 'iso' }}";
+const developerModeEnabled = {{ 'true' if settings.developer_mode else 'false' }};
+const developerControlsVisible = developerModeEnabled && {{ 'true' if user.role == 'admin' else 'false' }};
 let currentPage = 1;
 let totalSeries = 0;
 let totalPages = 1;
@@ -224,6 +229,80 @@ function render(list) {
     
 
 
+    if (developerControlsVisible && s.asin) {
+      const cloneBtn = document.createElement('button');
+      cloneBtn.className = 'btn btn-sm btn-outline-info ms-2';
+      cloneBtn.textContent = 'Duplicate';
+      cloneBtn.onclick = async () => {
+        const suggested = `${s.asin}-dev-${Date.now()}`;
+        const target = prompt('Enter mock ASIN for duplicate', suggested);
+        if (!target) {
+          return;
+        }
+        const trimmed = target.trim();
+        if (!trimmed) {
+          alert('ASIN cannot be empty');
+          return;
+        }
+        cloneBtn.disabled = true;
+        cloneBtn.textContent = 'Duplicating...';
+        try {
+          const resp = await fetch(apiPath(`/api/developer/series/${encodeURIComponent(s.asin)}/duplicate`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target_asin: trimmed }),
+          });
+          if (!resp.ok) {
+            const text = await resp.text();
+            throw new Error(text || 'Duplicate failed');
+          }
+          const data = await resp.json();
+          alert(`Series duplicated as ${data.asin}`);
+          loadSeries(currentPage);
+          return;
+        } catch (err) {
+          alert(err?.message || 'Failed to duplicate series');
+        } finally {
+          cloneBtn.disabled = false;
+          cloneBtn.textContent = 'Duplicate';
+        }
+      };
+      actions.appendChild(cloneBtn);
+
+      const probeBtn = document.createElement('button');
+      probeBtn.className = 'btn btn-sm btn-outline-warning ms-2';
+      probeBtn.textContent = 'Probe now';
+      probeBtn.onclick = async () => {
+        probeBtn.disabled = true;
+        const savedText = probeBtn.textContent;
+        probeBtn.textContent = 'Scheduling...';
+        try {
+          const resp = await fetch(apiPath(`/api/developer/series/${encodeURIComponent(s.asin)}/probe`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            probeBtn.textContent = data.job_id ? `Job ${data.job_id}` : 'Queued';
+          } else {
+            const text = await resp.text();
+            probeBtn.textContent = 'Error';
+            alert(text || 'Failed to schedule probe');
+          }
+        } catch (err) {
+          probeBtn.textContent = 'Error';
+          alert(err?.message || 'Failed to schedule probe');
+        } finally {
+          setTimeout(() => {
+            probeBtn.disabled = false;
+            probeBtn.textContent = 'Probe now';
+          }, 3000);
+        }
+      };
+      actions.appendChild(probeBtn);
+    }
+    
+    
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-outline-danger ms-2';
     delBtn.textContent = 'Delete';

@@ -23,6 +23,7 @@ class Settings(BaseModel):
     default_frontpage_slug: Optional[str] = None
     log_retention_days: int = 30
     debug_logging: bool = False
+    developer_mode: bool = False
 
 
 def default_settings() -> Settings:
@@ -43,6 +44,7 @@ def default_settings() -> Settings:
         default_frontpage_slug=None,
         log_retention_days=30,
         debug_logging=False,
+        developer_mode=False,
     )
 
 
