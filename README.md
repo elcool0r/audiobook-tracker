@@ -3,7 +3,7 @@
 Audiobook Tracker is a web application designed to help users track their favorite Audible audiobook series and receive notifications about new releases. 
 It uses the public Audible API to monitor series and provides both public frontpages for sharing and an admin interface for management. 
 
-It does not pirate or download any actual book. Get a Audible subc´scription ffs.
+It does not pirate or download any actual audiobooks. Get an Audible subscription ffs.
 ## Features
 
 - **Series Tracking**: Monitor audiobook series from Audible with automatic updates
