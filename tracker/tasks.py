@@ -5,7 +5,7 @@ import logging
 import threading
 from datetime import datetime, timezone
 from queue import SimpleQueue, Empty
-from typing import Dict, Any
+from typing import Any, Dict
 
 from bson import ObjectId
 
@@ -16,6 +16,48 @@ from .db import get_jobs_collection, get_series_collection, get_users_collection
 from lib.audible_api_search import DEFAULT_RESPONSE_GROUPS
 
 AUTO_REFRESH_CYCLE_SEC = 24 * 60 * 60
+
+
+def _book_asin(book: Any) -> str | None:
+    if isinstance(book, dict):
+        return book.get("asin")
+    return getattr(book, "asin", None)
+
+
+def _book_raw(book: Any) -> Any:
+    if isinstance(book, dict):
+        return book.get("raw")
+    return None
+
+
+def _book_raw_publication_datetime(raw: Any) -> str | None:
+    if isinstance(raw, dict):
+        value = raw.get("publication_datetime")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _books_raw_changed(old_books: list | None, new_books: list | None) -> bool:
+    if not old_books or not new_books:
+        return False
+    old_map: Dict[str, Any] = {}
+    for book in old_books:
+        asin = _book_asin(book)
+        if asin:
+            old_map[asin] = book
+    for book in new_books:
+        asin = _book_asin(book)
+        if not asin:
+            continue
+        old_book = old_map.get(asin)
+        if not old_book:
+            continue
+        old_pub = _book_raw_publication_datetime(_book_raw(old_book))
+        new_pub = _book_raw_publication_datetime(_book_raw(book))
+        if old_pub != new_pub:
+            return True
+    return False
 
 
 Job = Dict[str, Any]
@@ -301,6 +343,10 @@ class TaskWorker:
                 except Exception:
                     new_asins = []
                 new_book_added = bool(new_asins)
+                try:
+                    raw_changed = _books_raw_changed(old_books, books_current)
+                except Exception:
+                    raw_changed = False
 
                 # Send notifications when we fetched full data (or had no books before)
                 if changed or not old_books:
@@ -310,7 +356,7 @@ class TaskWorker:
                         pass
 
                 # A probe is considered to have 'changed' if new audiobooks were discovered or this is the first time we have books
-                final_changed = new_book_added or (not old_books and bool(books_current))
+                final_changed = raw_changed or new_book_added or (not old_books and bool(books_current))
 
                 # Schedule next refresh at least one full cycle in the future for both the probed ASIN and its parent
                 try:
@@ -324,7 +370,7 @@ class TaskWorker:
                     self._finish_job(
                         job_id,
                         {
-                            "book_count": len(books_current),
+                            "book_count": len(books_current or []),
                             "changed": bool(final_changed),
                             "new_book": new_book_added,
                         },
