@@ -31,8 +31,10 @@
               <li class="nav-item"><a class="nav-link" href="{{ base_path }}/series-admin">Series</a></li>
               <li class="nav-item"><a class="nav-link" href="{{ base_path }}/users">Users</a></li>
               <li class="nav-item"><a class="nav-link" href="{{ base_path }}/jobs">Jobs</a></li>
-              <li class="nav-item"><a class="nav-link" href="{{ base_path }}/logs">Logs</a></li>
               <li class="nav-item"><a class="nav-link" href="{{ base_path }}/settings">Settings</a></li>
+              {% endif %}
+              {% if settings.developer_mode and user and user.role == 'admin' %}
+              <li class="nav-item"><a class="nav-link" href="{{ base_path }}/logs">Logs</a></li>
               {% endif %}
               <li class="nav-item"><a class="nav-link" href="{{ base_path }}/profile">Profile</a></li>
               {% if user %}
@@ -45,7 +47,7 @@
               </a>
             </li>
             {% if not public_nav %}
-              {% if user and user.role == 'admin' %}
+              {% if settings.developer_mode and user and user.role == 'admin' %}
               <li class="nav-item ms-2"><a class="nav-link" href="{{ base_path }}/docs" target="_blank">API Docs</a></li>
               {% endif %}
               <li class="nav-item"><a class="nav-link" href="{{ base_path }}/logout">Logout</a></li>

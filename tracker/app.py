@@ -561,11 +561,13 @@ def create_app() -> FastAPI:
 
     @app.get(_p("/users"), response_class=HTMLResponse)
     async def users_page(request: Request, user=Depends(get_admin_user)):
-        return templates.TemplateResponse("users.html", {"request": request, "user": user})
+        settings = load_settings()
+        return templates.TemplateResponse("users.html", {"request": request, "user": user, "settings": settings})
 
     @app.get(_p("/profile"), response_class=HTMLResponse)
     async def profile_page(request: Request, user=Depends(get_current_user)):
-        return templates.TemplateResponse("profile.html", {"request": request, "user": user})
+        settings = load_settings()
+        return templates.TemplateResponse("profile.html", {"request": request, "user": user, "settings": settings})
 
     @app.get(_p("/series-admin"), response_class=HTMLResponse)
     async def series_admin_page(request: Request, user=Depends(get_admin_user)):
@@ -574,7 +576,8 @@ def create_app() -> FastAPI:
 
     @app.get(_p("/jobs"), response_class=HTMLResponse)
     async def jobs_page(request: Request, user=Depends(get_admin_user)):
-        return templates.TemplateResponse("jobs.html", {"request": request, "user": user})
+        settings = load_settings()
+        return templates.TemplateResponse("jobs.html", {"request": request, "user": user, "settings": settings})
 
     @app.get(_p("/logs"), response_class=HTMLResponse)
     async def logs_page(request: Request, user=Depends(get_admin_user)):
@@ -583,7 +586,8 @@ def create_app() -> FastAPI:
         logs = list(logs_col.find().sort("timestamp", -1).limit(100))
         # Convert ObjectId and datetime to string for JSON serialization
         logs = [convert_for_json(log) for log in logs]
-        return templates.TemplateResponse("logs.html", {"request": request, "user": user, "logs": logs})
+        settings = load_settings()
+        return templates.TemplateResponse("logs.html", {"request": request, "user": user, "logs": logs, "settings": settings})
 
     @app.get("/metrics")
     async def metrics():
