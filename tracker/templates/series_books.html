@@ -166,36 +166,30 @@ async function loadSeries() {
         };
         devRow.appendChild(markNewBtn);
 
-        const pubInputGroup = document.createElement('div');
-        pubInputGroup.className = 'input-group input-group-sm';
-        pubInputGroup.style.maxWidth = '260px';
-        const pubInput = document.createElement('input');
-        pubInput.className = 'form-control';
-        pubInput.placeholder = '2025-12-01T23:14:00Z';
-        pubInput.value = getBookPublicationDatetime(b);
-        pubInput.setAttribute('aria-label', 'Publication datetime in UTC ISO 8601 (e.g., 2025-12-01T23:14:00Z)');
-        const pubBtn = document.createElement('button');
-        pubBtn.className = 'btn btn-outline-primary';
-        pubBtn.textContent = 'Save';
-        pubBtn.onclick = async () => {
-          pubBtn.disabled = true;
-          pubBtn.textContent = 'Saving...';
+        // Developer helper: set publication datetime to now (UTC) and clear release notification flag
+        const pubSetBtn = document.createElement('button');
+        pubSetBtn.className = 'btn btn-sm btn-outline-primary';
+        pubSetBtn.textContent = 'Set publication to now';
+        pubSetBtn.setAttribute('aria-label', 'Set publication datetime to current UTC time and clear release notification flag');
+        pubSetBtn.setAttribute('title', 'Also clears the release notification marker for this book');
+        pubSetBtn.onclick = async () => {
+          pubSetBtn.disabled = true;
+          pubSetBtn.textContent = 'Setting...';
           setDevFeedback(devStatus, '', false);
           try {
-            await updatePublicationDatetime(series.asin, b, pubInput.value.trim() || null);
-            setDevFeedback(devStatus, 'Publication datetime saved', false);
+            // Request server to set publication_datetime to server UTC now
+            await updatePublicationDatetime(series.asin, b, null);
+            setDevFeedback(devStatus, 'Requested server to set publication datetime to now (UTC) and cleared release notification state', false);
             await loadSeries();
           } catch (err) {
             console.error(err);
-            setDevFeedback(devStatus, err?.message || 'Failed to update datetime', true);
+            setDevFeedback(devStatus, err?.message || 'Failed to set datetime', true);
           } finally {
-            pubBtn.disabled = false;
-            pubBtn.textContent = 'Save';
+            pubSetBtn.disabled = false;
+            pubSetBtn.textContent = 'Set publication to now';
           }
         };
-        pubInputGroup.appendChild(pubInput);
-        pubInputGroup.appendChild(pubBtn);
-        devRow.appendChild(pubInputGroup);
+        devRow.appendChild(pubSetBtn);
 
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'btn btn-sm btn-outline-danger';
@@ -228,7 +222,7 @@ async function loadSeries() {
         devSection.appendChild(devRow);
         const pubHelper = document.createElement('small');
         pubHelper.className = 'form-text text-muted mt-2';
-        pubHelper.textContent = 'Provide a UTC ISO 8601 timestamp (e.g., 2025-12-01T23:14:00Z); values are stored verbatim without locale conversion.';
+        pubHelper.textContent = 'Developer: click the button to set the publication datetime to the current UTC time plus one minute.';
         devSection.appendChild(pubHelper);
         devSection.appendChild(devStatus);
         li.appendChild(devSection);
@@ -342,7 +336,8 @@ async function markBookAsNew(seriesAsin, book) {
 }
 
 async function updatePublicationDatetime(seriesAsin, book, datetime) {
-  return developerRequest('POST', `/api/developer/series/${encodeURIComponent(seriesAsin)}/books/update-publication`, {
+  // Update the book's raw publication_datetime only (developer-only helper)
+  return developerRequest('POST', `/api/developer/series/${encodeURIComponent(seriesAsin)}/books/update-publication-raw`, {
     ...bookPayload(book),
     publication_datetime: datetime,
   });

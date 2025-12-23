@@ -639,7 +639,20 @@ async def api_series_book_visibility(asin: str, payload: SeriesBookVisibilityReq
     return {"matched": matched, "hidden": payload.hidden}
 
 
-def _clear_series_notification_history(series_asin: str, book_asin: str | None):
+def _clear_release_notification_history(series_asin: str, book_asin: str | None):
+    if not book_asin:
+        return
+    try:
+        lib_col = get_user_library_collection()
+        lib_col.update_many(
+            {"series_asin": series_asin},
+            {"$pull": {"notified_releases": book_asin}},
+        )
+    except Exception:
+        pass
+
+
+def _mark_new_asin_seen(series_asin: str, book_asin: str | None):
     if not book_asin:
         return
     try:
@@ -647,11 +660,23 @@ def _clear_series_notification_history(series_asin: str, book_asin: str | None):
         lib_col.update_many(
             {"series_asin": series_asin},
             {
-                "$pull": {
-                    "notified_new_asins": book_asin,
-                    "notified_releases": book_asin,
-                }
+                "$addToSet": {"notified_new_asins": book_asin},
+                "$set": {"notified_new_asins_initialized": True},
             },
+        )
+    except Exception:
+        pass
+
+
+def _clear_series_notification_history(series_asin: str, book_asin: str | None):
+    if not book_asin:
+        return
+    _clear_release_notification_history(series_asin, book_asin)
+    try:
+        lib_col = get_user_library_collection()
+        lib_col.update_many(
+            {"series_asin": series_asin},
+            {"$pull": {"notified_new_asins": book_asin}},
         )
     except Exception:
         pass
@@ -670,13 +695,17 @@ def _send_developer_notification_to_user(username: str | None, title: str, body:
         ap = apprise.Apprise()
         for url in urls:
             ap.add(url)
-        if attaches:
-            ap.notify(title=title, body=body, attach=attaches)
-        else:
-            ap.notify(title=title, body=body)
-        return True
+        try:
+            result = ap.notify(title=title, body=body)
+            if not result:
+                logger.warning("Developer notification to %s failed (apprise returned False)", username)
+                return False
+            return True
+        except Exception as exc:
+            logger.exception("Developer notification failed for %s", username)
+            return False
     except Exception as exc:
-        logger.exception("Developer notification failed for %s", username)
+        logger.exception("Developer notification failed to initialize apprise for %s: %s", username, exc)
         return False
 
 @api_router.post("/developer/series/{asin}/books/mark-new")
@@ -699,7 +728,8 @@ async def api_developer_mark_book_new(asin: str, payload: DeveloperSeriesBookAct
     if not old_books:
         old_books = [{"asin": "__dev_sentinel__"}]
     matched_book_asin = matched_book.get("asin") if isinstance(matched_book, dict) else None
-    _clear_series_notification_history(asin, matched_book_asin)
+    _clear_release_notification_history(asin, matched_book_asin)
+    _mark_new_asin_seen(asin, matched_book_asin)
     release_job_recorded = worker._send_series_notifications(asin, doc, old_books, books)
     username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
     if not release_job_recorded:
@@ -735,6 +765,7 @@ async def api_developer_update_publication_datetime(
     payload: DeveloperSeriesBookDatetimeRequest,
     user=Depends(get_current_user),
 ):
+    """Legacy endpoint: update the cached books list and trigger notifications. Kept for compatibility."""
     _require_developer_mode(user)
     if not payload.book_asin and not payload.title:
         raise HTTPException(status_code=400, detail="Book identifier required")
@@ -793,7 +824,55 @@ async def api_developer_update_publication_datetime(
         "asin": asin,
         "book_asin": matched_book.get("asin"),
         "publication_datetime": matched_book.get("publication_datetime"),
+        "book": matched_book,
     }
+
+
+@api_router.post("/developer/series/{asin}/books/update-publication-raw")
+async def api_developer_update_publication_datetime_raw(
+    asin: str,
+    payload: DeveloperSeriesBookDatetimeRequest,
+    user=Depends(get_current_user),
+):
+    """Developer-only: update publication_datetime in the book's 'raw' dict only. Does NOT trigger notifications and is overwritten on next series refresh."""
+    _require_developer_mode(user)
+    if not payload.book_asin and not payload.title:
+        raise HTTPException(status_code=400, detail="Book identifier required")
+    series_col = get_series_collection()
+    doc = series_col.find_one({"_id": asin})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Series not found")
+    books = doc.get("books", []) if isinstance(doc.get("books"), list) else []
+    matched_book = None
+    new_books = []
+    for book in books:
+        if matched_book is None and _book_matches(book, payload.book_asin, payload.title):
+            new_book = dict(book)
+            raw = dict(new_book.get("raw") or {})
+            # If client sends null, set server-side UTC now (use current time)
+            if payload.publication_datetime is None:
+                dt = datetime.utcnow()
+                raw["publication_datetime"] = dt.replace(microsecond=0).isoformat() + "Z"
+            elif payload.publication_datetime:
+                raw["publication_datetime"] = payload.publication_datetime
+            else:
+                raw.pop("publication_datetime", None)
+            new_book["raw"] = raw
+            matched_book = new_book
+            new_books.append(new_book)
+            continue
+        new_books.append(book)
+    if not matched_book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    matched_book_asin = matched_book.get("asin") if isinstance(matched_book, dict) else None
+    _clear_series_notification_history(asin, matched_book_asin)
+    # Persist only the raw update; do NOT trigger notifications or send developer emails
+    try:
+        series_col.update_one({"_id": asin}, {"$set": {"books": new_books}})
+    except Exception as exc:
+        logger.exception("Failed to update raw publication datetime for %s: %s", asin, exc)
+        raise HTTPException(status_code=500, detail="Failed to update database")
+    return {"status": "ok", "book": matched_book}
 
 
 @api_router.delete("/developer/series/{asin}/books")

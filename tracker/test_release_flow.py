@@ -155,7 +155,8 @@ class TestReleaseFlow:
             assert "New Audiobook" in content
             assert test_series_title in content
             assert new_book['title'] in content
-            assert new_book['image'] in content
+            # Attachments were removed from notifier; accept None attach value
+            assert 'ATTACH:' in content
 
             # Verify that notified_new_asins were persisted for the library entry
             # (update_one should be called to add to notified_new_asins)

@@ -501,8 +501,10 @@ class TaskWorker:
                 day_diff = abs((now_date - pub_dt.date()).days)
                 if day_diff > 1:
                     continue
-                delta_sec = (now - pub_dt).total_seconds()
-                if delta_sec < 0 or delta_sec > self._release_check_interval_sec:
+                # Only include items whose publication datetime is at or before now.
+                # Remove the strict upper-bound on elapsed seconds to avoid timing races
+                # where a dev write happens just before a sweep but the sweep runs > interval later.
+                if pub_dt > now:
                     continue
                 release_candidates.append((b, pub_dt))
 
@@ -610,7 +612,8 @@ class TaskWorker:
                 continue
 
             known_asins = entry.get("notified_new_asins") if isinstance(entry.get("notified_new_asins"), list) else []
-            known_set = {a for a in known_asins if a}
+            known_releases = entry.get("notified_releases") if isinstance(entry.get("notified_releases"), list) else []
+            known_set = {a for a in known_asins if a} | {a for a in known_releases if a}
             pending_asins = []
             for b in books:
                 if not isinstance(b, dict):
@@ -713,6 +716,7 @@ class TaskWorker:
         users_col = get_users_collection()
         series_title = series_doc.get("title") or f"Series {asin}"
 
+        job_recorded = False
         for entry in lib_col.find({"series_asin": asin}):
             username = entry.get("username")
             if not username:
@@ -766,6 +770,7 @@ class TaskWorker:
             new_audiobook_msg = next((msg for msg in to_send_msgs if msg[0] == "New Audiobook(s)"), None)
             release_msg = next((msg for msg in to_send_msgs if msg[0] == "Audiobook Release"), None)
             apprise_error = None
+            sent_any = False
             # Send via Apprise
             try:
                 import apprise
@@ -779,6 +784,8 @@ class TaskWorker:
                         result = ap.notify(title=title, body=body)
                         if not result:
                             apprise_error = "Apprise notification failed (all services returned failure)"
+                        else:
+                            sent_any = True
                     except Exception as exc:
                         apprise_error = str(exc)
             except Exception as exc:
@@ -809,6 +816,9 @@ class TaskWorker:
                         success=apprise_error is None,
                         error=apprise_error,
                     )
+            # Mark that we attempted notifications (return value will expose this)
+            if sent_any:
+                job_recorded = True
 
             # Update per-user notification state: releases
             if notify_new and new_asins:
@@ -833,6 +843,8 @@ class TaskWorker:
                         lib_col.update_one({"_id": entry.get("_id")}, {"$addToSet": {"notified_releases": {"$each": to_mark_rel}}})
                 except Exception:
                     pass
+
+        return job_recorded
 
 
 worker = TaskWorker()
@@ -868,6 +880,11 @@ def _publication_datetime_utc(book: Any) -> datetime | None:
         return getattr(book, key, None) if hasattr(book, key) else None
 
     raw_pub = _val("publication_datetime")
+    # If top-level publication_datetime is missing, check raw.publication_datetime set by developer tools
+    if not raw_pub and isinstance(book, dict):
+        raw_obj = book.get("raw")
+        if isinstance(raw_obj, dict):
+            raw_pub = raw_obj.get("publication_datetime")
     pub_dt = _parse_iso_datetime(raw_pub) if raw_pub else None
     if pub_dt:
         try:
