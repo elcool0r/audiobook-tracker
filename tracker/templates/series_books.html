@@ -12,6 +12,7 @@
     <div id="seriesList"></div>
   </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 const developerModeEnabled = {{ 'true' if settings.developer_mode else 'false' }};
 const isAdminUser = {{ 'true' if user.role == 'admin' else 'false' }};
@@ -39,6 +40,354 @@ async function loadSeries() {
   if (!series.books || !Array.isArray(series.books) || series.books.length === 0) {
     container.innerHTML = '<div class="alert alert-info">This series has no books yet.</div>';
     return;
+  }
+  
+  let runtimeMouseX = 0, runtimeMouseY = 0;
+  let ratingMouseX = 0, ratingMouseY = 0;
+  
+  // Create chart for release dates
+  const chartCard = document.createElement('div');
+  chartCard.className = 'card mb-3';
+  const chartHeader = document.createElement('div');
+  chartHeader.className = 'card-header d-flex justify-content-between align-items-center';
+  const headerTitle = document.createElement('h5');
+  headerTitle.className = 'mb-0';
+  headerTitle.style.cursor = 'pointer';
+  headerTitle.setAttribute('data-bs-toggle', 'collapse');
+  headerTitle.setAttribute('data-bs-target', '#statisticsCollapse');
+  headerTitle.setAttribute('aria-expanded', 'false');
+  headerTitle.setAttribute('aria-controls', 'statisticsCollapse');
+  headerTitle.textContent = 'Series Statistics';
+  headerTitle.onclick = () => {
+    const isExpanded = headerTitle.getAttribute('aria-expanded') === 'true';
+    headerTitle.setAttribute('aria-expanded', !isExpanded ? 'true' : 'false');
+  };
+  chartHeader.appendChild(headerTitle);
+  chartCard.appendChild(chartHeader);
+  const chartBody = document.createElement('div');
+  chartBody.className = 'card-body collapse';
+  chartBody.id = 'statisticsCollapse';
+  
+  // Create tabs
+  const tabNav = document.createElement('ul');
+  tabNav.className = 'nav nav-tabs';
+  tabNav.setAttribute('role', 'tablist');
+  
+  const releaseTab = document.createElement('li');
+  releaseTab.className = 'nav-item';
+  releaseTab.setAttribute('role', 'presentation');
+  const releaseTabLink = document.createElement('button');
+  releaseTabLink.className = 'nav-link active';
+  releaseTabLink.id = 'release-tab';
+  releaseTabLink.setAttribute('data-bs-toggle', 'tab');
+  releaseTabLink.setAttribute('data-bs-target', '#release-pane');
+  releaseTabLink.setAttribute('type', 'button');
+  releaseTabLink.setAttribute('role', 'tab');
+  releaseTabLink.setAttribute('aria-controls', 'release-pane');
+  releaseTabLink.setAttribute('aria-selected', 'true');
+  releaseTabLink.textContent = 'Release Dates';
+  releaseTab.appendChild(releaseTabLink);
+  tabNav.appendChild(releaseTab);
+  
+  const runtimeTab = document.createElement('li');
+  runtimeTab.className = 'nav-item';
+  runtimeTab.setAttribute('role', 'presentation');
+  const runtimeTabLink = document.createElement('button');
+  runtimeTabLink.className = 'nav-link';
+  runtimeTabLink.id = 'runtime-tab';
+  runtimeTabLink.setAttribute('data-bs-toggle', 'tab');
+  runtimeTabLink.setAttribute('data-bs-target', '#runtime-pane');
+  runtimeTabLink.setAttribute('type', 'button');
+  runtimeTabLink.setAttribute('role', 'tab');
+  runtimeTabLink.setAttribute('aria-controls', 'runtime-pane');
+  runtimeTabLink.setAttribute('aria-selected', 'false');
+  runtimeTabLink.textContent = 'Runtime';
+  runtimeTab.appendChild(runtimeTabLink);
+  tabNav.appendChild(runtimeTab);
+  
+  const ratingTab = document.createElement('li');
+  ratingTab.className = 'nav-item';
+  ratingTab.setAttribute('role', 'presentation');
+  const ratingTabLink = document.createElement('button');
+  ratingTabLink.className = 'nav-link';
+  ratingTabLink.id = 'rating-tab';
+  ratingTabLink.setAttribute('data-bs-toggle', 'tab');
+  ratingTabLink.setAttribute('data-bs-target', '#rating-pane');
+  ratingTabLink.setAttribute('type', 'button');
+  ratingTabLink.setAttribute('role', 'tab');
+  ratingTabLink.setAttribute('aria-controls', 'rating-pane');
+  ratingTabLink.setAttribute('aria-selected', 'false');
+  ratingTabLink.textContent = 'Ratings';
+  ratingTab.appendChild(ratingTabLink);
+  tabNav.appendChild(ratingTab);
+  
+  chartBody.appendChild(tabNav);
+  
+  const tabContent = document.createElement('div');
+  tabContent.className = 'tab-content mt-3';
+  
+  // Release dates tab pane
+  const releasePane = document.createElement('div');
+  releasePane.className = 'tab-pane fade show active';
+  releasePane.id = 'release-pane';
+  releasePane.setAttribute('role', 'tabpanel');
+  releasePane.setAttribute('aria-labelledby', 'release-tab');
+  const releaseCanvas = document.createElement('canvas');
+  releaseCanvas.style.maxHeight = '300px';
+  releasePane.appendChild(releaseCanvas);
+  tabContent.appendChild(releasePane);
+  
+  // Runtime tab pane
+  const runtimePane = document.createElement('div');
+  runtimePane.className = 'tab-pane fade';
+  runtimePane.id = 'runtime-pane';
+  runtimePane.setAttribute('role', 'tabpanel');
+  runtimePane.setAttribute('aria-labelledby', 'runtime-tab');
+  const runtimeCanvas = document.createElement('canvas');
+  runtimeCanvas.style.maxHeight = '300px';
+  runtimePane.appendChild(runtimeCanvas);
+  tabContent.appendChild(runtimePane);
+  
+  // Rating tab pane
+  const ratingPane = document.createElement('div');
+  ratingPane.className = 'tab-pane fade';
+  ratingPane.id = 'rating-pane';
+  ratingPane.setAttribute('role', 'tabpanel');
+  ratingPane.setAttribute('aria-labelledby', 'rating-tab');
+  const ratingCanvas = document.createElement('canvas');
+  ratingCanvas.style.maxHeight = '300px';
+  ratingPane.appendChild(ratingCanvas);
+  tabContent.appendChild(ratingPane);
+  
+  chartBody.appendChild(tabContent);
+  chartCard.appendChild(chartBody);
+  container.appendChild(chartCard);
+  
+  // Collect release years and runtime data
+  const yearCounts = {};
+  const runtimeData = [];
+  const ratingData = [];
+  series.books.forEach(book => {
+    if (book.release_date && new Date(book.release_date) <= new Date()) {
+      const year = book.release_date.split('-')[0];
+      if (year && /^\d{4}$/.test(year)) {
+        yearCounts[year] = (yearCounts[year] || 0) + 1;
+      }
+    }
+    if (book.release_date && new Date(book.release_date) <= new Date() && book.runtime && typeof book.runtime === 'number') {
+      runtimeData.push({
+        date: book.release_date,
+        runtime: book.runtime / 60,  // Convert to hours
+        title: book.title || 'Unknown',
+        image: book.image
+      });
+    }
+    if (book.release_date && new Date(book.release_date) <= new Date() && book.raw && book.raw.rating && book.raw.rating.overall_distribution && book.raw.rating.overall_distribution.display_average_rating) {
+      const rating = parseFloat(book.raw.rating.overall_distribution.display_average_rating);
+      if (!isNaN(rating)) {
+        ratingData.push({
+          date: book.release_date,
+          rating: rating,
+          title: book.title || 'Unknown',
+          image: book.image
+        });
+      }
+    }
+  });
+  const years = Object.keys(yearCounts).sort();
+  const counts = years.map(year => yearCounts[year]);
+  
+  // Sort runtime data by date
+  runtimeData.sort((a, b) => a.date.localeCompare(b.date));
+  const runtimeLabels = runtimeData.map(d => d.title);
+  const runtimeValues = runtimeData.map(d => d.runtime);
+  
+  // Sort rating data by date
+  ratingData.sort((a, b) => a.date.localeCompare(b.date));
+  const ratingLabels = ratingData.map(d => d.title);
+  const ratingValues = ratingData.map(d => d.rating);
+  
+  // Create release chart
+  new Chart(releaseCanvas, {
+    type: 'line',
+    data: {
+      labels: years,
+      datasets: [{
+        label: 'Books Released',
+        data: counts,
+        backgroundColor: 'rgba(54, 162, 235, 0.5)',
+        borderColor: 'rgba(54, 162, 235, 1)',
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: {
+            stepSize: 1
+          }
+        }
+      }
+    }
+  });
+  
+  // Create runtime chart if data exists
+  if (runtimeData.length > 0) {
+    new Chart(runtimeCanvas, {
+      type: 'line',
+      data: {
+        labels: runtimeLabels,
+        datasets: [{
+          label: 'Runtime (hours)',
+          data: runtimeValues,
+          backgroundColor: 'rgba(255, 99, 132, 0.5)',
+          borderColor: 'rgba(255, 99, 132, 1)',
+          borderWidth: 1,
+          pointRadius: 3,
+          pointHoverRadius: 5
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            title: {
+              display: true,
+              text: 'Book Title'
+            }
+          },
+          y: {
+            beginAtZero: true,
+            title: {
+              display: true,
+              text: 'Runtime (hours)'
+            }
+          }
+        },
+        plugins: {
+          tooltip: {
+            enabled: false,
+            external: function(context) {
+              let tooltipEl = document.getElementById('runtime-tooltip');
+              if (!tooltipEl) {
+                tooltipEl = document.createElement('div');
+                tooltipEl.id = 'runtime-tooltip';
+                tooltipEl.style.position = 'absolute';
+                tooltipEl.style.pointerEvents = 'none';
+                tooltipEl.style.background = 'rgba(0,0,0,0.8)';
+                tooltipEl.style.color = 'white';
+                tooltipEl.style.padding = '5px 10px';
+                tooltipEl.style.borderRadius = '4px';
+                tooltipEl.style.fontSize = '12px';
+                tooltipEl.style.zIndex = '1000';
+                document.body.appendChild(tooltipEl);
+              }
+              const tooltip = context.tooltip;
+              if (tooltip.opacity === 0) {
+                tooltipEl.style.opacity = 0;
+                return;
+              }
+              const index = tooltip.dataPoints[0].dataIndex;
+              const data = runtimeData[index];
+              tooltipEl.innerHTML = data.image ? `<img src="${data.image}" style="width: 120px; height: auto; margin-right: 8px; vertical-align: middle;"> ${data.title}` : data.title;
+              tooltipEl.style.left = runtimeMouseX + 10 + 'px';
+              tooltipEl.style.top = runtimeMouseY - 10 + 'px';
+              tooltipEl.style.opacity = 1;
+            }
+          }
+        }
+      }
+    });
+    runtimeCanvas.addEventListener('mousemove', (e) => {
+      runtimeMouseX = e.clientX;
+      runtimeMouseY = e.clientY;
+    });
+  } else {
+    // If no runtime data, hide the runtime tab
+    runtimeTab.style.display = 'none';
+  }
+  
+  // Create rating chart if data exists
+  if (ratingData.length > 0) {
+    new Chart(ratingCanvas, {
+      type: 'line',
+      data: {
+        labels: ratingLabels,
+        datasets: [{
+          label: 'Average Rating',
+          data: ratingValues,
+          backgroundColor: 'rgba(75, 192, 192, 0.5)',
+          borderColor: 'rgba(75, 192, 192, 1)',
+          borderWidth: 1,
+          pointRadius: 3,
+          pointHoverRadius: 5
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            title: {
+              display: true,
+              text: 'Book Title'
+            }
+          },
+          y: {
+            beginAtZero: false,
+            min: 0,
+            max: 5,
+            title: {
+              display: true,
+              text: 'Rating'
+            }
+          }
+        },
+        plugins: {
+          tooltip: {
+            enabled: false,
+            external: function(context) {
+              let tooltipEl = document.getElementById('rating-tooltip');
+              if (!tooltipEl) {
+                tooltipEl = document.createElement('div');
+                tooltipEl.id = 'rating-tooltip';
+                tooltipEl.style.position = 'absolute';
+                tooltipEl.style.pointerEvents = 'none';
+                tooltipEl.style.background = 'rgba(0,0,0,0.8)';
+                tooltipEl.style.color = 'white';
+                tooltipEl.style.padding = '5px 10px';
+                tooltipEl.style.borderRadius = '4px';
+                tooltipEl.style.fontSize = '12px';
+                tooltipEl.style.zIndex = '1000';
+                document.body.appendChild(tooltipEl);
+              }
+              const tooltip = context.tooltip;
+              if (tooltip.opacity === 0) {
+                tooltipEl.style.opacity = 0;
+                return;
+              }
+              const index = tooltip.dataPoints[0].dataIndex;
+              const data = ratingData[index];
+              tooltipEl.innerHTML = data.image ? `<img src="${data.image}" style="width: 120px; height: auto; margin-right: 8px; vertical-align: middle;"> ${data.title}` : data.title;
+              tooltipEl.style.left = ratingMouseX + 10 + 'px';
+              tooltipEl.style.top = ratingMouseY - 10 + 'px';
+              tooltipEl.style.opacity = 1;
+            }
+          }
+        }
+      }
+    });
+    ratingCanvas.addEventListener('mousemove', (e) => {
+      ratingMouseX = e.clientX;
+      ratingMouseY = e.clientY;
+    });
+  } else {
+    // If no rating data, hide the rating tab
+    ratingTab.style.display = 'none';
   }
   
   const list = document.createElement('div');
