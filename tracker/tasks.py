@@ -9,7 +9,16 @@ from typing import Any, Dict
 
 from bson import ObjectId
 
-from .library import fetch_series_books, set_series_books, set_series_raw, touch_series_fetched, set_series_next_refresh, _fetch_series_books_internal, ensure_series_document
+from .library import (
+    _fetch_series_books_internal,
+    ensure_series_document,
+    fetch_series_books,
+    is_book_hidden,
+    set_series_books,
+    set_series_raw,
+    set_series_next_refresh,
+    touch_series_fetched,
+)
 from lib.audible_api_search import get_product_by_asin
 from .settings import load_settings
 from .db import get_jobs_collection, get_series_collection, get_users_collection, get_user_library_collection
@@ -320,8 +329,8 @@ class TaskWorker:
                         set_series_raw(asin, parent_obj_full)
                         if parent_asin_full and parent_asin_full != asin:
                             set_series_raw(parent_asin_full, parent_obj_full)
-                    books_current = books
-                    set_series_books(asin, books)
+                    processed_books = set_series_books(asin, books)
+                    books_current = processed_books
                 else:
                     # Update raw parent only if we fetched it, but skip expensive child fetch
                     if isinstance(parent_obj, dict):
@@ -646,10 +655,21 @@ class TaskWorker:
             if not isinstance(books, list) or not books:
                 continue
 
-            book_map: Dict[str, Dict[str, Any]] = {}
+            def _is_visible(book: Dict[str, Any] | None) -> bool:
+                return bool(book and not is_book_hidden(book))
+
+            visible_books = []
             for b in books:
                 if not isinstance(b, dict):
                     continue
+                if not _is_visible(b):
+                    continue
+                visible_books.append(b)
+            if not visible_books:
+                continue
+
+            book_map: Dict[str, Dict[str, Any]] = {}
+            for b in visible_books:
                 b_asin = b.get("asin")
                 if not b_asin:
                     continue
@@ -661,7 +681,7 @@ class TaskWorker:
             known_releases = entry.get("notified_releases") if isinstance(entry.get("notified_releases"), list) else []
             known_set = {a for a in known_asins if a} | {a for a in known_releases if a}
             pending_asins = []
-            for b in books:
+            for b in visible_books:
                 if not isinstance(b, dict):
                     continue
                 asin_val = b.get("asin")
@@ -724,9 +744,20 @@ class TaskWorker:
         def _get(book, key):
             return book.get(key) if isinstance(book, dict) else getattr(book, key, None)
 
+        def _is_visible(book):
+            return not is_book_hidden(book)
+
         # Build sets for diff (support dicts or model instances)
-        old_asins = {_get(b, "asin") for b in (old_books or []) if _get(b, "asin")}
-        cur_asins = {_get(b, "asin") for b in (books_current or []) if _get(b, "asin")}
+        old_asins = {
+            _get(b, "asin")
+            for b in (old_books or [])
+            if _get(b, "asin") and _is_visible(b)
+        }
+        cur_asins = {
+            _get(b, "asin")
+            for b in (books_current or [])
+            if _get(b, "asin") and _is_visible(b)
+        }
         new_asins = [a for a in cur_asins - old_asins if a]
         
         # If this is the first time we have books for this series, bail out (no notifications on initial add)
@@ -736,6 +767,8 @@ class TaskWorker:
         # Map asin -> book for quick lookup
         book_map = {}
         for b in (books_current or []):
+            if not _is_visible(b):
+                continue
             asin_val = _get(b, "asin")
             if asin_val:
                 book_map[asin_val] = b
@@ -749,7 +782,7 @@ class TaskWorker:
         new_asin_set = set(new_asins)
         for b in (books_current or []):
             asin_val = _get(b, "asin")
-            if not asin_val or asin_val not in new_asin_set:
+            if not asin_val or asin_val not in new_asin_set or not _is_visible(b):
                 continue
             pub_dt = _publication_datetime_utc(b)
             if pub_dt:

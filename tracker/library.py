@@ -190,7 +190,7 @@ def _deduplicate_books_by_title(books: List[Dict[str, Any]]) -> List[Dict[str, A
     return deduped
 
 
-def set_series_books(asin: str, books: List[Dict[str, Any]]) -> None:
+def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if books is None:
         books = []
     # Deduplicate books by title, keeping only the newer one based on release_date
@@ -243,6 +243,7 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> None:
             },
             upsert=True
         )
+    return processed_books
 
 
 def set_series_raw(asin: str, raw: Dict[str, Any] | None) -> None:
@@ -560,30 +561,7 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
             book["image"] = None
         books.append(book)
 
-    # If a 2nd Edition exists for a title, drop the non-2nd edition copy
-    second_re = re.compile(r"\s*\(2nd Edition\)\s*$", re.IGNORECASE)
-
-    def _is_second(title: Optional[str]) -> bool:
-        return bool(title) and bool(second_re.search(title))
-
-    def _base_title(title: Optional[str]) -> Optional[str]:
-        if not title:
-            return None
-        return second_re.sub("", title).strip()
-
-    bases_with_second = {
-        _base_title(b.get("title"))
-        for b in books
-        if _is_second(b.get("title")) and _base_title(b.get("title"))
-    }
-
-    filtered_books: List[Dict[str, Any]] = []
-    for b in books:
-        title = b.get("title")
-        base = _base_title(title)
-        if base and base in bases_with_second and not _is_second(title):
-            continue
-        filtered_books.append(b)
+    filtered_books: List[Dict[str, Any]] = books
 
     if settings.debug_logging:
         logging.info(f"Fetched {len(filtered_books)} books for series {series_asin}")
