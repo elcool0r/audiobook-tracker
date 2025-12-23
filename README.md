@@ -1,16 +1,22 @@
 # Audiobook Tracker
 
-Audiobook Tracker is a web application designed to help users track their favorite audiobook series and receive notifications about new releases. It uses the public Audible API to monitor series and provides both public frontpages for sharing and an admin interface for management. 
+Audiobook Tracker is a web application designed to help users track their favorite Audible audiobook series and receive notifications about new releases. 
+It uses the public Audible API to monitor series and provides both public frontpages for sharing and an admin interface for management. 
 
+It does not pirate or download any actual book. Get a Audible subc´scription ffs.
 ## Features
 
 - **Series Tracking**: Monitor audiobook series from Audible with automatic updates
 - **Release Notifications**: Get notified when new books are released in tracked series
 - **User Frontpages**: Shareable pages showing your tracked series and upcoming releases
 - **Admin Interface**: Web-based admin panel for managing users, series, and jobs
+- **Library Management**: Browse and search your personal audiobook collection
+- **Series Statistics**: Interactive charts showing release dates, runtime trends, and ratings over time
 - **API Access**: RESTful API for programmatic interaction
 - **User Management**: Support for multiple users with customizable settings
 - **Date Formatting**: Configurable date formats (US, DE, ISO)
+- **Developer Mode**: Advanced testing controls
+- **Security Features**: Account lockout after failed login attempts, rate limiting
 - **Prometheus Metrics**: Built-in metrics for monitoring API usage and system performance
 - **Responsive Design**: Mobile-friendly interface using Bootstrap
 
@@ -82,6 +88,14 @@ Series admin view
 2. Add users and configure their settings
 3. Import series by ASIN or search Audible
 4. Monitor background jobs for updates
+5. Browse your library
+6. View detailed statistics and charts for each series
+
+### Library Management
+
+- Access your personal library at `/config/library`
+- Search and filter your audiobook collection
+- View series statistics with interactive charts
 
 ### Public Frontpages
 
@@ -91,9 +105,9 @@ Series admin view
 
 ### API Usage
 
-The application provides a REST API for integration:
+The application provides a REST API for integration. Enable developer mode in settings to access API documentation.
 
-- `GET /config/docs` - API documentation
+- `GET /config/docs` - API documentation (requires developer mode)
 - `GET /config/series` - List series
 - `POST /config/series` - Add series
 - `GET /config/users` - List users
@@ -129,6 +143,7 @@ user_count 3
 - Date format: ISO, US (MM/DD/YYYY), or DE (DD.MM.YYYY)
 - Frontpage slug: Custom URL slug for public page
 - Notification preferences
+- Developer mode: Enable advanced testing controls and API access
 
 ## Development
 
@@ -136,9 +151,17 @@ user_count 3
 
 - `tracker/`: FastAPI backend with Jinja2 templates
 - `tracker/static/`: CSS and static assets
-- `tracker/templates/`: HTML templates
+- `tracker/templates/`: HTML templates with Bootstrap components
 - `tool/`: Utility scripts for maintenance
 - `docs/`: Static output directory
+- `lib/`: Audible API integration and utilities
+
+### Key Features
+
+- **Interactive Charts**: Chart.js integration for series statistics
+- **Collapsible UI**: Bootstrap collapse components for better UX
+- **Rate Limiting**: Account lockout protection for login security
+- **Developer Tools**: Advanced testing controls when developer mode is enabled
 
 ### Running in Development
 
@@ -161,7 +184,7 @@ docker build -t audiobook-tracker .
 
 ## API Documentation
 
-Full API documentation is available at `/config/docs` when the application is running.
+Full API documentation is available at `/config/docs` when the application is running and developer mode is enabled in user settings.
 
 ## Contributing
 
