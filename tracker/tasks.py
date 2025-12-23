@@ -532,22 +532,8 @@ class TaskWorker:
                 ap = apprise.Apprise()
                 for u in urls:
                     ap.add(u)
-                # Attempt to attach cover images for pending books when available
-                attaches = []
-                for b, _ in pending:
-                    img = None
-                    if isinstance(b, dict):
-                        img = b.get('image') or (isinstance(b.get('product_images'), dict) and next(iter(b.get('product_images').values())))
-                    if img:
-                        attaches.append(img)
                 try:
-                    if attaches:
-                        result = ap.notify(title="Audiobook Release", body=body, attach=attaches)
-                        if not result:
-                            # Retry without attachments if images failed
-                            result = ap.notify(title="Audiobook Release", body=body)
-                    else:
-                        result = ap.notify(title="Audiobook Release", body=body)
+                    result = ap.notify(title="Audiobook Release", body=body)
                     if not result:
                         send_error = "Apprise notification failed (all services returned failure)"
                     else:
@@ -646,27 +632,14 @@ class TaskWorker:
                     ap = apprise.Apprise()
                     for u in urls:
                         ap.add(u)
-                    attaches = []
-                    for a in pending_asins:
-                        b = book_map.get(a)
-                        img = None
-                        if isinstance(b, dict):
-                            img = b.get('image') or (
-                                isinstance(b.get('product_images'), dict) and next(iter(b.get('product_images').values()))
-                            )
-                        if img:
-                            attaches.append(img)
-                    if attaches:
-                        result = ap.notify(title="New Audiobook(s)", body=body, attach=attaches)
-                        if not result:
-                            # Retry without attachments if images failed
-                            result = ap.notify(title="New Audiobook(s)", body=body)
-                    else:
+                    try:
                         result = ap.notify(title="New Audiobook(s)", body=body)
-                    if not result:
-                        apprise_error = "Apprise notification failed (all services returned failure)"
-                except Exception as exc:
-                    apprise_error = str(exc)
+                        if not result:
+                            apprise_error = "Apprise notification failed (all services returned failure)"
+                        else:
+                            apprise_error = None
+                    except Exception as exc:
+                        apprise_error = str(exc)
                 finally:
                     self._record_notification_job(
                         job_type="new_audiobook_notification",
@@ -799,27 +772,15 @@ class TaskWorker:
                 ap = apprise.Apprise()
                 for u in urls:
                     ap.add(u)
-                # send each message
+                # send each message (text-only; attachments removed)
                 for msg in to_send_msgs:
                     title, body = msg[0], msg[1]
-                    asins = msg[2] if len(msg) > 2 else []
-                    attaches = []
-                    for a in asins:
-                        b = book_map.get(a)
-                        img = None
-                        if isinstance(b, dict):
-                            img = b.get('image') or (isinstance(b.get('product_images'), dict) and next(iter(b.get('product_images').values())))
-                        if img:
-                            attaches.append(img)
-                    if attaches:
-                        result = ap.notify(title=title, body=body, attach=attaches)
-                        if not result:
-                            # Retry without attachments if images failed
-                            result = ap.notify(title=title, body=body)
-                    else:
+                    try:
                         result = ap.notify(title=title, body=body)
-                    if not result:
-                        apprise_error = "Apprise notification failed (all services returned failure)"
+                        if not result:
+                            apprise_error = "Apprise notification failed (all services returned failure)"
+                    except Exception as exc:
+                        apprise_error = str(exc)
             except Exception as exc:
                 apprise_error = str(exc)
             finally:
