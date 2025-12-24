@@ -473,20 +473,25 @@ async function loadSeries() {
       hiddenBadge.textContent = 'Hidden';
       hiddenBadge.style.display = hidden ? '' : 'none';
       controls.appendChild(hiddenBadge);
-      const toggleBtn = document.createElement('button');
-      toggleBtn.className = 'btn btn-sm btn-outline-secondary';
-      toggleBtn.textContent = hidden ? 'Show in public lists' : 'Hide from public lists';
-      toggleBtn.onclick = async () => {
-        toggleBtn.disabled = true;
-        try {
-          await updateSeriesBookVisibility(series.asin, b, !hidden);
-          await loadSeries();
-        } catch (err) {
-          console.error(err);
-          toggleBtn.disabled = false;
-        }
-      };
-      controls.appendChild(toggleBtn);
+      
+      // Only show visibility toggle button for admin users
+      if (isAdminUser) {
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'btn btn-sm btn-outline-secondary';
+        toggleBtn.textContent = hidden ? 'Show in public lists' : 'Hide from public lists';
+        toggleBtn.onclick = async () => {
+          toggleBtn.disabled = true;
+          try {
+            await updateSeriesBookVisibility(series.asin, b, !hidden);
+            await loadSeries();
+          } catch (err) {
+            console.error(err);
+            toggleBtn.disabled = false;
+          }
+        };
+        controls.appendChild(toggleBtn);
+      }
+      
       li.appendChild(controls);
 
       if (showDeveloperControls && series.asin) {
