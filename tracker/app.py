@@ -284,12 +284,14 @@ def create_app() -> FastAPI:
 
     @app.get(_p("/"), response_class=HTMLResponse)
     async def config_root(request: Request):
-        return templates.TemplateResponse("login.html", {"request": request, "error": None})
+        settings = load_settings()
+        return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": None})
 
     @app.get(_p("/login"), response_class=HTMLResponse)
     async def login_get(request: Request):  # , csrf_protect: CsrfProtect = Depends()):
         # csrf_token = csrf_protect.generate_csrf()
-        resp = templates.TemplateResponse("login.html", {"request": request, "error": None})  # , "csrf_token": csrf_token})
+        settings = load_settings()
+        resp = templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": None})  # , "csrf_token": csrf_token})
         # csrf_protect.set_csrf_cookie(resp)
         return resp
 
@@ -310,19 +312,22 @@ def create_app() -> FastAPI:
             log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "User not found")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
-            return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid credentials"})
+            settings = load_settings()
+            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Invalid credentials"})
         if is_account_locked(user_doc):
             log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "Account locked")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
-            return templates.TemplateResponse("login.html", {"request": request, "error": "Account locked due to too many failed attempts"})
+            settings = load_settings()
+            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Account locked due to too many failed attempts"})
         if not verify_password(password, user_doc.get("password_hash", "")):
             record_failed_attempt(username)
             log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "Invalid password")
             logger.warning(f"Failed login attempt for username: {username}")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
-            return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid credentials"})
+            settings = load_settings()
+            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Invalid credentials"})
         record_successful_login(username)
         token = create_access_token({"sub": username})
         log_auth_event("login_success", username, request.client.host, request.headers.get("user-agent", ""))
@@ -368,7 +373,8 @@ def create_app() -> FastAPI:
         users_col = get_users_collection()
         user_doc = users_col.find_one({"$or": [{"frontpage_slug": slug}, {"username": slug}]})
         if not user_doc:
-            return templates.TemplateResponse("login.html", {"request": request, "error": "User not found"}, status_code=404)
+            settings = load_settings()
+            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "User not found"}, status_code=404)
         username = user_doc.get("username")
         date_format = user_doc.get("date_format", "iso")
         library = get_user_library(username)
