@@ -145,6 +145,66 @@ user_count 3
 - Notification preferences
 - Developer mode: Enable advanced testing controls and API access
 
+### Notification Setup (Apprise)
+
+The application uses Apprise for sending notifications. Configure your notification URLs in the user settings. Here are examples for popular services:
+
+#### Discord
+```
+discord://webhook_id/webhook_token
+```
+*Get webhook URL from Server Settings → Integrations → Webhooks → New Webhook*
+
+#### Slack
+```
+slack://token_a/token_b/token_c
+```
+*Get tokens from Slack App settings (OAuth & Permissions)*
+
+#### Telegram
+```
+tgram://bot_token/chat_id
+```
+*Create a bot with @BotFather, get bot token, then send /start to bot to get chat_id*
+
+#### Email
+```
+mailto://user:password@example.com
+```
+*Use your SMTP server details*
+
+#### Pushover
+```
+pover://user_key@token
+```
+*Get user key and create an app for the token from Pushover.net*
+
+#### Gotify
+```
+gotify://hostname/token
+```
+*Create an app in Gotify web interface to get the token*
+
+#### Matrix
+```
+matrix://user:password@hostname?webhook=room_alias
+```
+*Use your Matrix server details and room alias*
+
+#### Microsoft Teams
+```
+msteams://webhook_url
+```
+*Create a webhook connector in Teams channel settings*
+
+#### Webhook (Generic)
+```
+json://https://your-webhook-url.com
+```
+*Any HTTP endpoint that accepts JSON POST requests*
+
+Multiple notification URLs can be combined with commas. Test your configuration using the "Test Notification" button in user settings.
+
 ## Development
 
 ### Project Structure
