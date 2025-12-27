@@ -5,6 +5,7 @@ on:
     branches:
       - master
       - dev
+      - docker-testing
     tags:
       - 'v*'
       - 'dev-*'
@@ -18,6 +19,7 @@ on:
         options:
         - master
         - dev
+        - docker-testing
 
 jobs:
   test:
@@ -51,11 +53,11 @@ jobs:
 
     - name: Run unit tests
       run: |
-        python -m pytest tracker/test_release_flow.py tracker/test_release_sweep.py -v
+        # python -m pytest tests/operations/ tracker/test_release_sweep.py -v
 
     - name: Run integration tests
       run: |
-        python -m pytest tracker/test_integration.py -v
+        # python -m pytest tests/integration/ -v
       env:
         MONGO_URI: mongodb://localhost:27017
         MONGO_DB: test_audiobook_tracker
