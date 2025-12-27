@@ -9,12 +9,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     VERSION=${VERSION}
 
-# Copy .git for version detection
-COPY .git .git
-
-# Install git for version detection
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
