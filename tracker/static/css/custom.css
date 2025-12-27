@@ -277,6 +277,7 @@ html[data-bs-theme="dark"],
 	color: #6c757d;
 }
 
-[data-bs-target="#knownSeriesCollapse"].collapsed .collapse-icon {
+[data-bs-target="#knownSeriesCollapse"].collapsed .collapse-icon,
+[data-bs-target="#statisticsCollapse"].collapsed .collapse-icon {
 	transform: rotate(-90deg);
 }
