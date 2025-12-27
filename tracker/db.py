@@ -1,7 +1,15 @@
+import warnings
 from functools import lru_cache
 import os
 
 from pymongo import MongoClient
+
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=r".*pkg_resources is deprecated.*",
+    module="mongomock.__version__",
+)
 
 try:
     import mongomock  # type: ignore

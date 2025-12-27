@@ -18,24 +18,48 @@ This document contains development-specific information. For general usage and i
 - **Rate Limiting**: Account lockout protection for login security
 - **Developer Tools**: Advanced testing controls when developer mode is enabled
 
-## Running in Development
+## Running Tests
+
+The project includes comprehensive tests covering unit tests, integration tests, and build verification.
+
+### Local Testing
+
+Run all tests locally with the provided script:
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Start MongoDB
-docker run -d -p 27017:27017 mongo:7
-
-# Run with auto-reload
-uvicorn tracker.app:app --reload
+./test.sh
 ```
 
-## Building Docker Image
+This will:
+- Start a test MongoDB instance
+- Run unit tests
+- Run integration tests
+- Test Docker build
+- Clean up test resources
 
-```bash
-docker build -t audiobook-tracker .
-```
+### Test Categories
+
+- **Unit Tests**: `tracker/test_release_flow.py`, `tracker/test_release_sweep.py`
+- **Integration Tests**: `tracker/test_integration.py` - Tests full application functionality including:
+  - App startup and health checks
+  - Authentication (login/logout)
+  - Page access (all main pages)
+  - API endpoints
+  - Metrics endpoint
+  - Static file serving
+  - Error handling
+
+### CI/CD Testing
+
+Tests are automatically run in GitHub Actions on:
+- Push to `master` or `dev` branches
+- Tag pushes (v* and dev-*)
+- Manual workflow dispatch
+
+The CI pipeline includes:
+- Unit and integration test execution
+- Docker build verification
+- Image building and pushing to GHCR
 
 ## Docker Compose for Development
 

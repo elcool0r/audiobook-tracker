@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.responses import Response
 from fastapi.exception_handlers import http_exception_handler
+from contextlib import asynccontextmanager
 import logging
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -67,6 +68,21 @@ async def get_admin_user(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     return user
 
+async def _start_worker():
+    ensure_default_admin()
+    ensure_indexes()
+    rebuild_series_user_counts()
+    # Cleanup old logs
+    settings = load_settings()
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=settings.log_retention_days)
+    from .db import get_logs_collection
+    logs_col = get_logs_collection()
+    logs_col.delete_many({"timestamp": {"$lt": cutoff}})
+    worker.start()
+
+async def _stop_worker():
+    worker.stop()
+
 def create_app() -> FastAPI:
     from .settings import load_settings
     settings = load_settings()
@@ -74,10 +90,19 @@ def create_app() -> FastAPI:
         logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
     else:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup
+        await _start_worker()
+        yield
+        # Shutdown
+        await _stop_worker()
+
     app = FastAPI(
         docs_url=_p("/docs"),
         redoc_url=_p("/redoc"),
         openapi_url=_p("/openapi.json"),
+        lifespan=lifespan
     )
     app.state.limiter = limiter
     app.add_middleware(SlowAPIMiddleware)
@@ -102,7 +127,7 @@ def create_app() -> FastAPI:
         date_format = user_doc.get("date_format", "iso")
         library = get_user_library(username)
 
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         def _parse_date(s):
             try:
@@ -143,7 +168,7 @@ def create_app() -> FastAPI:
             mins = m % 60
             return f"{h}h {mins}m" if h else f"{mins}m"
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         upcoming_cards = []
         latest_cards = []
         series_rows = []
@@ -283,7 +308,7 @@ def create_app() -> FastAPI:
         page = render_frontpage_for_slug(request, slug)
         if page:
             return page
-        return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": None, "version": __version__})
+        return RedirectResponse(url=_p("/"), status_code=302)
 
     @app.get(_p("/"), response_class=HTMLResponse)
     async def config_root(request: Request):
@@ -345,7 +370,7 @@ def create_app() -> FastAPI:
     async def logout(request: Request, user=Depends(get_current_user)):
         from .auth import log_auth_event
         log_auth_event("logout", user["username"], request.client.host, request.headers.get("user-agent", ""))
-        resp = RedirectResponse(url=_p("/login"))
+        resp = RedirectResponse(url=_p("/login"), status_code=302)
         resp.delete_cookie(TOKEN_NAME)
         return resp
 
@@ -382,7 +407,7 @@ def create_app() -> FastAPI:
         date_format = user_doc.get("date_format", "iso")
         library = get_user_library(username)
 
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         def _parse_date(s):
             try:
@@ -423,7 +448,7 @@ def create_app() -> FastAPI:
             mins = m % 60
             return f"{h}h {mins}m" if h else f"{mins}m"
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         upcoming_cards = []
         latest_cards = []
         series_rows = []
@@ -558,6 +583,11 @@ def create_app() -> FastAPI:
     @app.get(_p("/series/{asin}"), response_class=HTMLResponse)
     async def view_series_page(request: Request, asin: str):
         # public view for a series by ASIN with public navbar
+        from .db import get_series_collection
+        series_col = get_series_collection()
+        series_doc = series_col.find_one({"asin": asin})
+        if not series_doc:
+            raise HTTPException(status_code=404, detail="Series not found")
         return templates.TemplateResponse(
             "view_series.html",
             {"request": request, "asin": asin, "public_nav": True, "brand_title": "Audiobook Tracker", "version": __version__},
@@ -605,23 +635,6 @@ def create_app() -> FastAPI:
         return Response(generate_latest(), media_type="text/plain")
 
     app.include_router(api_router, prefix=_p("/api"))
-
-    @app.on_event("startup")
-    async def _start_worker():
-        ensure_default_admin()
-        ensure_indexes()
-        rebuild_series_user_counts()
-        # Cleanup old logs
-        settings = load_settings()
-        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=settings.log_retention_days)
-        from .db import get_logs_collection
-        logs_col = get_logs_collection()
-        logs_col.delete_many({"timestamp": {"$lt": cutoff}})
-        worker.start()
-
-    @app.on_event("shutdown")
-    async def _stop_worker():
-        worker.stop()
 
     return app
 

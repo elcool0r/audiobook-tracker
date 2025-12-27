@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -39,6 +39,11 @@ SKIP_TITLE_HEADER = 'x-audiobook-search-skipped-title'
 SKIP_ASIN_HEADER = 'x-audiobook-search-skipped-asin'
 SKIP_COUNT_HEADER = 'x-audiobook-search-skipped-count'
 SKIP_REASON_KNOWN = 'known_series_title'
+
+
+def _utcnow_iso() -> str:
+    iso = datetime.now(timezone.utc).isoformat()
+    return iso.replace('+00:00', 'Z')
 
 
 class SearchRequest(BaseModel):
@@ -156,7 +161,7 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Forbidden")
     current = load_settings()
-    provided_fields = payload.__fields_set__
+    provided_fields = payload.model_fields_set
 
     def _pick(field: str, current_value):
         # Respect explicit nulls so proxy fields can be cleared when desired.
@@ -588,7 +593,7 @@ async def api_update_series_title(asin: str, payload: SeriesTitleUpdateRequest, 
         raise HTTPException(status_code=404, detail="Series not found")
     updates: Dict[str, Any] = {
         "title": new_title,
-        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "updated_at": _utcnow_iso(),
     }
     existing_title = series_doc.get("title")
     if existing_title and existing_title != new_title and not series_doc.get("original_title"):
@@ -851,8 +856,8 @@ async def api_developer_update_publication_datetime_raw(
             raw = dict(new_book.get("raw") or {})
             # If client sends null, set server-side UTC now (use current time)
             if payload.publication_datetime is None:
-                dt = datetime.utcnow()
-                raw["publication_datetime"] = dt.replace(microsecond=0).isoformat() + "Z"
+                dt = datetime.now(timezone.utc)
+                raw["publication_datetime"] = dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
             elif payload.publication_datetime:
                 raw["publication_datetime"] = payload.publication_datetime
             else:
@@ -947,7 +952,7 @@ async def api_developer_duplicate_series(
         "raw": copy.deepcopy(doc.get("raw")) if doc.get("raw") is not None else None,
         "next_refresh_at": None,
         "user_count": 0,
-        "created_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": _utcnow_iso(),
         "original_title": original_title,
     }
     series_col.insert_one(new_doc)
@@ -1237,10 +1242,9 @@ async def api_refresh_series(asin: str, payload: SeriesRefreshRequest | None = N
 async def api_reschedule_all_series(user=Depends(get_current_user)):
     _require_admin(user)
     from .tasks import reschedule_all_series
-    from datetime import datetime
     result = reschedule_all_series()
     # Record as a job entry for auditing
-    now_iso = datetime.utcnow().isoformat() + "Z"
+    now_iso = _utcnow_iso()
     job_id = str(get_jobs_collection().insert_one({
         "type": "reschedule_all_series",
         "username": user.get("username"),
@@ -1537,7 +1541,6 @@ async def api_create_api_key(payload: ApiKeyCreateRequest, user=Depends(get_curr
     from .db import get_api_keys_collection
     import secrets
     import string
-    from datetime import datetime
     
     # Generate 40 character alphanumeric key
     alphabet = string.ascii_letters + string.digits
@@ -1547,7 +1550,7 @@ async def api_create_api_key(payload: ApiKeyCreateRequest, user=Depends(get_curr
         "username": user["username"],
         "key": api_key,
         "description": payload.description,
-        "created_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": _utcnow_iso(),
         "last_used_at": None,
     }
     get_api_keys_collection().insert_one(doc)

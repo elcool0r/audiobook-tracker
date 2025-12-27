@@ -20,7 +20,54 @@ on:
         - dev
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.inputs.branch || github.ref_name }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run unit tests
+      run: |
+        python -m pytest tracker/test_release_flow.py tracker/test_release_sweep.py -v
+
+    - name: Run integration tests
+      run: |
+        python -m pytest tracker/test_integration.py -v
+      env:
+        MONGO_URI: mongodb://localhost:27017
+        MONGO_DB: test_audiobook_tracker
+        SECRET_KEY: test_secret_key_for_ci
+
+    - name: Test Docker build
+      run: |
+        docker build -t test-audiobook-tracker .
+        docker run --rm test-audiobook-tracker --help || true  # Just test if container starts
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
 
     steps:

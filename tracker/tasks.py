@@ -930,10 +930,10 @@ worker = TaskWorker()
 
 
 def _now_iso():
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 def _now_dt():
-    return datetime.utcnow()
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 def _delta_sec(sec: int):
     from datetime import timedelta

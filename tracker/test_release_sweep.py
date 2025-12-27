@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -11,6 +11,8 @@ from tracker.tasks import worker
 
 
 def test_check_due_release_notifications_picks_up_raw_pubdt():
+    # Clear the lru_cache to ensure we get a fresh connection
+    get_db.cache_clear()
     db = get_db()
     # Clean collections
     db.users.delete_many({})
@@ -32,8 +34,8 @@ def test_check_due_release_notifications_picks_up_raw_pubdt():
     })
 
     # Create series with one book that has raw.publication_datetime set to now - 2 minutes
-    now = datetime.utcnow().replace(microsecond=0)
-    pub = (now - timedelta(minutes=2)).isoformat() + "Z"
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    pub = (now - timedelta(minutes=2)).isoformat().replace('+00:00', 'Z')
     db.series.insert_one({
         "_id": "S1",
         "title": "Test Series",
