@@ -17,7 +17,8 @@ def get_version():
             version = result.stdout.strip()
             version = version.lstrip('v')  # Remove 'v' prefix if present
             return version
-    except:
+    except Exception:
+        # If git is unavailable or the command fails, fall back to the static version below.
         pass
     
     # Fallback to static version
