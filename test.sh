@@ -50,7 +50,7 @@ except:
     exit(1)
 "; then
     echo "✅ MongoDB accessible, running integration tests..."
-    export MONGO_URI=\"mongodb://localhost:27017\"  # Use real MongoDB for integration tests
+    export MONGO_URI="mongodb://localhost:27017"  # Use real MongoDB for integration tests
     python -m pytest tests/integration tracker/test_release_sweep.py -v
 else
     echo "⚠️  MongoDB not accessible from localhost, skipping integration tests"
