@@ -20,7 +20,7 @@ services:
     build:
       context: .
       args:
-        VERSION: 0.2.0
+        VERSION: ${VERSION:-latest}
     depends_on:
       mongo:
         condition: service_healthy
