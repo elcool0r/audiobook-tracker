@@ -414,7 +414,7 @@ async function loadSeries() {
   series.books.forEach(b => {
       const li = document.createElement('li');
       li.className = 'list-group-item';
-      const hidden = Boolean(b.hidden);
+      let hidden = Boolean(b.hidden);
       if (hidden) {
         li.classList.add('series-book-hidden');
       }
@@ -483,9 +483,13 @@ async function loadSeries() {
           toggleBtn.disabled = true;
           try {
             await updateSeriesBookVisibility(series.asin, b, !hidden);
-            await loadSeries();
+            hidden = !hidden;
+            b.hidden = hidden;
+            hiddenBadge.style.display = hidden ? '' : 'none';
+            toggleBtn.textContent = hidden ? 'Show in public lists' : 'Hide from public lists';
           } catch (err) {
             console.error(err);
+          } finally {
             toggleBtn.disabled = false;
           }
         };
