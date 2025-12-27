@@ -3,7 +3,6 @@ from unittest.mock import patch, MagicMock
 from tracker.app import create_app
 from tracker.auth import create_access_token
 import os
-import json
 
 
 @pytest.fixture
