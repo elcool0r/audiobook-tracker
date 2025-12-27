@@ -90,6 +90,7 @@ def create_app() -> FastAPI:
     def render_frontpage_for_slug(request: Request, slug: str):
         if not slug:
             return None
+        settings = load_settings()
         from .db import get_users_collection
         from .library import get_user_library
         users_col = get_users_collection()
@@ -260,6 +261,7 @@ def create_app() -> FastAPI:
             "frontpage.html",
             {
                 "request": request,
+                "settings": settings,
                 "base_path": "",
                 "public_nav": True,
                 "brand_title": "Audiobook Tracker",
@@ -280,7 +282,7 @@ def create_app() -> FastAPI:
         page = render_frontpage_for_slug(request, slug)
         if page:
             return page
-        return templates.TemplateResponse("login.html", {"request": request, "error": None})
+        return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": None})
 
     @app.get(_p("/"), response_class=HTMLResponse)
     async def config_root(request: Request):
