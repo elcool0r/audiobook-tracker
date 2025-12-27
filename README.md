@@ -18,7 +18,7 @@ It does not pirate or download any actual audiobooks. Get an Audible subscriptio
 - **Developer Mode**: Advanced testing controls
 - **Security Features**: Account lockout after failed login attempts, rate limiting
 - **Prometheus Metrics**: Built-in metrics for monitoring API usage and system performance
-- **Responsive Design**: Mobile-friendly interface using Bootstrap
+- **Versioning**: Application and Docker images are versioned for easy deployment and rollback
 
 ## Screenshots
 
@@ -41,20 +41,47 @@ Series admin view
 
 ### Quick Start with Docker
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/elcool0r/audiobook-tracker.git
-   cd audiobook-tracker
-   ```
+Create a `docker-compose.yml` file with the following content (this uses the production image):
 
-2. Start the application:
-   ```bash
-   docker compose up -d
-   ```
+```yaml
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: audiobook_tracker
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: changeme123
+    volumes:
+      - ./mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-3. Access the application:
-   - Admin interface: http://localhost:8000/config
-   - Public pages: http://localhost:8000
+  tracker:
+    image: ghcr.io/elcool0r/audiobook-tracker:latest
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_URI: mongodb://root:changeme123@mongo:27017
+      MONGO_DB: audiobook_tracker
+      SECRET_KEY: supersecretkey123456789
+    ports:
+      - "8000:8000"
+```
+
+Then run:
+
+```bash
+docker compose up -d
+```
+
+Access the application:
+- Admin interface: http://localhost:8000/config
+- Public pages: http://localhost:8000
 
 ### Manual Installation
 
@@ -209,40 +236,7 @@ Multiple notification URLs can be combined with commas. Test your configuration 
 
 ## Development
 
-### Project Structure
-
-- `tracker/`: FastAPI backend with Jinja2 templates
-- `tracker/static/`: CSS and static assets
-- `tracker/templates/`: HTML templates with Bootstrap components
-- `tool/`: Utility scripts for maintenance
-- `docs/`: Static output directory
-- `lib/`: Audible API integration and utilities
-
-### Key Features
-
-- **Interactive Charts**: Chart.js integration for series statistics
-- **Collapsible UI**: Bootstrap collapse components for better UX
-- **Rate Limiting**: Account lockout protection for login security
-- **Developer Tools**: Advanced testing controls when developer mode is enabled
-
-### Running in Development
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Start MongoDB
-docker run -d -p 27017:27017 mongo:7
-
-# Run with auto-reload
-uvicorn tracker.app:app --reload
-```
-
-### Building Docker Image
-
-```bash
-docker build -t audiobook-tracker .
-```
+For development information, see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## API Documentation
 

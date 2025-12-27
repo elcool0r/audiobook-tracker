@@ -6,6 +6,7 @@ on:
       - master
       - dev
     tags:
+      - 'v*'
       - 'dev-*'
   workflow_dispatch:
     inputs:
@@ -39,12 +40,20 @@ jobs:
       id: meta
       run: |
         REF="${{ github.event.inputs.branch || github.ref_name }}"
-        if [ "$REF" = "master" ]; then
+        if [[ "$REF" == v* ]]; then
+          # Semantic version tag like v1.0.0
+          VERSION="${REF#v}"
+          echo "tags=ghcr.io/${{ github.actor }}/audiobook-tracker:$VERSION,ghcr.io/${{ github.actor }}/audiobook-tracker:latest" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        elif [ "$REF" = "master" ]; then
           echo "tags=ghcr.io/${{ github.actor }}/audiobook-tracker:latest,ghcr.io/${{ github.actor }}/audiobook-tracker:master" >> $GITHUB_OUTPUT
+          echo "version=master" >> $GITHUB_OUTPUT
         elif [[ "$REF" == dev-* ]]; then
           echo "tags=ghcr.io/${{ github.actor }}/audiobook-tracker:$REF" >> $GITHUB_OUTPUT
+          echo "version=$REF" >> $GITHUB_OUTPUT
         else
           echo "tags=ghcr.io/${{ github.actor }}/audiobook-tracker:$REF" >> $GITHUB_OUTPUT
+          echo "version=$REF" >> $GITHUB_OUTPUT
         fi
 
     - name: Build and push Docker image
@@ -53,3 +62,4 @@ jobs:
         context: .
         push: true
         tags: ${{ steps.meta.outputs.tags }}
+        build-args: VERSION=${{ steps.meta.outputs.version }}

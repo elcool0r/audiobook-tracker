@@ -1,5 +1,8 @@
 FROM python:3.12-slim
 
+ARG VERSION=dev
+LABEL version=${VERSION}
+
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
