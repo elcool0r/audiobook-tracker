@@ -2,11 +2,21 @@ import subprocess
 import os
 
 def get_version():
+    # First, try environment variable (set by Docker)
+    version = os.getenv('VERSION')
+    if version and version != 'dev':
+        version = version.lstrip('v')  # Remove 'v' prefix if present
+        return version
+    
+    # Try to get version from git tag
     try:
-        # Try to get version from git tag
-        result = subprocess.run(['git', 'describe', '--tags', '--abbrev=0'], capture_output=True, text=True, cwd=os.path.dirname(__file__))
+        result = subprocess.run(['git', 'describe', '--tags', '--abbrev=0'], 
+                              capture_output=True, text=True, 
+                              cwd='/app')
         if result.returncode == 0:
-            return result.stdout.strip()
+            version = result.stdout.strip()
+            version = version.lstrip('v')  # Remove 'v' prefix if present
+            return version
     except:
         pass
     

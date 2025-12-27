@@ -20,6 +20,7 @@ def client():
     
     mock_users_collection = MagicMock()
     def mock_find_user(query):
+        # Handle both simple username queries and $or queries for frontpage
         username = query.get("username")
         if username == "admin":
             return {
@@ -29,6 +30,20 @@ def client():
                 "failed_attempts": 0,
                 "lock_until": None
             }
+        
+        # Handle $or queries for frontpage_slug/username lookup
+        or_conditions = query.get("$or")
+        if or_conditions:
+            for condition in or_conditions:
+                if condition.get("username") == "admin" or condition.get("frontpage_slug") == "admin":
+                    return {
+                        "username": "admin",
+                        "frontpage_slug": "admin",
+                        "password_hash": admin_password_hash,
+                        "role": "admin",
+                        "failed_attempts": 0,
+                        "lock_until": None
+                    }
         return None
     
     mock_users_collection.find_one.side_effect = mock_find_user
@@ -43,13 +58,32 @@ def client():
                 "default_frontpage_slug": "",
                 "secret_key": "test_secret_key"
             }
-            with patch('slowapi.extension.Limiter.limit', return_value=lambda func: func):  # Disable rate limiting decorator
-                app = create_app()
-                # Remove SlowAPI middleware for tests
-                app.user_middleware = [m for m in app.user_middleware if 'SlowAPI' not in str(m.cls)]
-                from fastapi.testclient import TestClient
-                with TestClient(app) as client:
-                    yield client
+            with patch('tracker.library.get_user_library') as mock_get_library:
+                # Mock library data with series that have books with release dates
+                mock_series = type('Series', (), {
+                    'title': 'Test Series',
+                    'asin': 'S001',
+                    'url': 'https://example.com/series',
+                    'fetched_at': '2024-01-01T00:00:00Z',
+                    'books': [
+                        type('Book', (), {
+                            'title': 'Book 1',
+                            'release_date': '2024-01-01',  # This will trigger the datetime bug
+                            'url': 'https://example.com/book1',
+                            'asin': 'B001',
+                            'narrators': ['Narrator 1'],
+                            'runtime': 360
+                        })()
+                    ]
+                })()
+                mock_get_library.return_value = [mock_series]
+                with patch('slowapi.extension.Limiter.limit', return_value=lambda func: func):  # Disable rate limiting decorator
+                    app = create_app()
+                    # Remove SlowAPI middleware for tests
+                    app.user_middleware = [m for m in app.user_middleware if 'SlowAPI' not in str(m.cls)]
+                    from fastapi.testclient import TestClient
+                    with TestClient(app) as client:
+                        yield client
 
 
 @pytest.fixture
@@ -271,9 +305,8 @@ class TestPublicPages:
     
     def test_public_home_page(self, client):
         """Test accessing a public user home page."""
-        # This will likely return 404 for non-existent users, which is expected
-        response = client.get("/home/testuser")
-        assert response.status_code in [200, 404]
+        response = client.get("/home/admin")
+        assert response.status_code == 200
 
 
 class TestStaticFiles:

@@ -51,13 +51,21 @@ async function loadSeries() {
   const chartHeader = document.createElement('div');
   chartHeader.className = 'card-header d-flex justify-content-between align-items-center';
   const headerTitle = document.createElement('h5');
-  headerTitle.className = 'mb-0';
+  headerTitle.className = 'mb-0 d-flex align-items-center';
   headerTitle.style.cursor = 'pointer';
   headerTitle.setAttribute('data-bs-toggle', 'collapse');
   headerTitle.setAttribute('data-bs-target', '#statisticsCollapse');
   headerTitle.setAttribute('aria-expanded', 'false');
   headerTitle.setAttribute('aria-controls', 'statisticsCollapse');
-  headerTitle.textContent = 'Series Statistics';
+  
+  const chevronIcon = document.createElement('i');
+  chevronIcon.className = 'bi bi-chevron-down me-2 collapse-icon';
+  headerTitle.appendChild(chevronIcon);
+  
+  const titleText = document.createElement('span');
+  titleText.textContent = 'Series Statistics';
+  headerTitle.appendChild(titleText);
+  
   headerTitle.onclick = () => {
     const isExpanded = headerTitle.getAttribute('aria-expanded') === 'true';
     headerTitle.setAttribute('aria-expanded', !isExpanded ? 'true' : 'false');
@@ -162,6 +170,17 @@ async function loadSeries() {
   chartBody.appendChild(tabContent);
   chartCard.appendChild(chartBody);
   container.appendChild(chartCard);
+  
+  // Add chevron rotation for statistics collapse
+  const statisticsCollapse = chartBody;
+  statisticsCollapse.addEventListener('shown.bs.collapse', function () {
+    const header = statisticsCollapse.previousElementSibling.querySelector('h5');
+    if (header) header.classList.remove('collapsed');
+  });
+  statisticsCollapse.addEventListener('hidden.bs.collapse', function () {
+    const header = statisticsCollapse.previousElementSibling.querySelector('h5');
+    if (header) header.classList.add('collapsed');
+  });
   
   // Collect release years and runtime data
   const yearCounts = {};

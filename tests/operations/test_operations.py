@@ -63,14 +63,6 @@ def client():
                     "failed_attempts": 0,
                     "lock_until": None
                 }
-            elif username == "testuser":
-                return {
-                    "username": "testuser",
-                    "password_hash": admin_password_hash,  # Use same hash for simplicity
-                    "role": "user",
-                    "failed_attempts": 0,
-                    "lock_until": None
-                }
             return None
         
         # Mock settings
@@ -128,8 +120,8 @@ def auth_headers():
 
 @pytest.fixture
 def user_auth_headers():
-    """Create authentication headers for regular user."""
-    token = create_access_token({"sub": "testuser", "role": "user"})
+    """Create authentication headers for admin user."""
+    token = create_access_token({"sub": "admin", "role": "admin"})
     return {"Cookie": f"audiobook_tracker_token={token}"}
 
 
@@ -161,13 +153,13 @@ class TestUserManagement:
 
         with patch('tracker.db.get_users_collection') as mock_users_col:
             mock_users_col.return_value.find_one.return_value = {
-                "username": "testuser",
-                "role": "user"
+                "username": "admin",
+                "role": "admin"
             }
             mock_users_col.return_value.update_one.return_value = MagicMock()
 
             response = client.put(
-                "/config/api/users/testuser",
+                "/config/api/users/admin",
                 json=update_data,
                 headers=auth_headers
             )

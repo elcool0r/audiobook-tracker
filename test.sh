@@ -34,7 +34,7 @@ pip install -r requirements.txt
 
 echo "🧪 Running unit tests..."
 unset MONGO_URI  # Use mongomock for unit tests
-PYTHONWARNINGS="ignore:pkg_resources is deprecated as an API:DeprecationWarning,ignore:'crypt' is deprecated and slated for removal in Python 3.13:DeprecationWarning" python -m pytest tracker/test_integration.py tracker/test_operations.py -v
+PYTHONWARNINGS="ignore:pkg_resources is deprecated as an API:DeprecationWarning,ignore:'crypt' is deprecated and slated for removal in Python 3.13:DeprecationWarning" python -m pytest tests/operations -v
 
 echo "🔗 Checking integration test requirements..."
 # Check if MongoDB is accessible from localhost
@@ -51,7 +51,7 @@ except:
 "; then
     echo "✅ MongoDB accessible, running integration tests..."
     export MONGO_URI=\"mongodb://localhost:27017\"  # Use real MongoDB for integration tests
-    python -m pytest tracker/test_integration.py -v
+    python -m pytest tests/integration tracker/test_release_sweep.py -v
 else
     echo "⚠️  MongoDB not accessible from localhost, skipping integration tests"
     echo "💡 To run integration tests locally, uncomment the MongoDB port in docker-compose.yml"

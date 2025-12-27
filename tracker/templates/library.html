@@ -38,7 +38,8 @@
   {% endif %}
     <div class="card mb-3">
       <div class="card-header">
-        <h5 class="card-title mb-0" style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#knownSeriesCollapse" aria-expanded="true" aria-controls="knownSeriesCollapse">
+        <h5 class="card-title mb-0 d-flex align-items-center" style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#knownSeriesCollapse" aria-expanded="true" aria-controls="knownSeriesCollapse">
+          <i class="bi bi-chevron-down me-2 collapse-icon"></i>
           Known Series
         </h5>
       </div>
@@ -907,5 +908,16 @@ fetchLibrary();
 loadKnownSeries();
 
 document.getElementById('librarySearch').addEventListener('input', renderLibraryTable);
+
+// Handle collapsible chevron rotation
+document.getElementById('knownSeriesCollapse').addEventListener('shown.bs.collapse', function () {
+  const header = document.querySelector('[data-bs-target="#knownSeriesCollapse"]');
+  if (header) header.classList.remove('collapsed');
+});
+
+document.getElementById('knownSeriesCollapse').addEventListener('hidden.bs.collapse', function () {
+  const header = document.querySelector('[data-bs-target="#knownSeriesCollapse"]');
+  if (header) header.classList.add('collapsed');
+});
 </script>
 {% endblock %}

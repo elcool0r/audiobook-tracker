@@ -12,6 +12,7 @@
     <meta name="apple-mobile-web-app-title" content="{{ brand_title or 'Audiobook Tracker' }}">
     <meta name="theme-color" content="#101010">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
     <link href="{{ base_path }}/static/css/custom.css" rel="stylesheet">
   </head>
   <body>
@@ -23,7 +24,7 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
       <div class="container-fluid">
         <a class="navbar-brand" href="{{ (base_path ~ '/library') if not public_nav else '#' }}">{{ brand_title or 'Audiobook Tracker' }}</a>
-        <span class="navbar-text small text-muted ms-2">v{{ version }}</span>
+        <span class="navbar-text small text-muted ms-2">{{ version }}</span>
         <div class="collapse navbar-collapse">
           <ul class="navbar-nav ms-auto align-items-center">
             {% if not public_nav %}

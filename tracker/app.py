@@ -131,7 +131,7 @@ def create_app() -> FastAPI:
 
         def _parse_date(s):
             try:
-                return datetime.fromisoformat((s or "").split("T")[0])
+                return datetime.fromisoformat((s or "").split("T")[0]).replace(tzinfo=timezone.utc)
             except Exception:
                 return None
 
@@ -298,6 +298,7 @@ def create_app() -> FastAPI:
                 "upcoming": upcoming_cards,
                 "latest": latest_cards,
                 "series": series_rows,
+                "version": __version__,
             },
         )
 
@@ -411,7 +412,7 @@ def create_app() -> FastAPI:
 
         def _parse_date(s):
             try:
-                return datetime.fromisoformat((s or "").split("T")[0])
+                return datetime.fromisoformat((s or "").split("T")[0]).replace(tzinfo=timezone.utc)
             except Exception:
                 return None
 
