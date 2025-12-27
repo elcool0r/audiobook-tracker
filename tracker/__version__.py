@@ -10,9 +10,10 @@ def get_version():
     
     # Try to get version from git tag
     try:
-        result = subprocess.run(['git', 'describe', '--tags', '--abbrev=0'], 
-                              capture_output=True, text=True, 
-                              cwd='/app')
+        git_cwd = '/app' if os.path.isdir('/app') else os.getcwd()
+        result = subprocess.run(['git', 'describe', '--tags', '--abbrev=0'],
+                              capture_output=True, text=True,
+                              cwd=git_cwd)
         if result.returncode == 0:
             version = result.stdout.strip()
             version = version.lstrip('v')  # Remove 'v' prefix if present
