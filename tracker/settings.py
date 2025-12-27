@@ -24,6 +24,7 @@ class Settings(BaseModel):
     log_retention_days: int = 30
     debug_logging: bool = False
     developer_mode: bool = False
+    default_num_results: int = 10
 
 
 def default_settings() -> Settings:
@@ -45,6 +46,7 @@ def default_settings() -> Settings:
         log_retention_days=30,
         debug_logging=False,
         developer_mode=False,
+        default_num_results=10,
     )
 
 
@@ -72,10 +74,10 @@ def load_settings() -> Settings:
         # Override with env vars
         if os.getenv("SECRET_KEY"):
             s.secret_key = os.getenv("SECRET_KEY")
-        col.insert_one({"_id": "global", **s.dict()})
+        col.insert_one({"_id": "global", **s.model_dump()})
         ensure_default_admin()
         return s
-    settings_obj = Settings.parse_obj({k: v for k, v in doc.items() if k != "_id"})
+    settings_obj = Settings.model_validate({k: v for k, v in doc.items() if k != "_id"})
     # Override with env vars if set
     if os.getenv("SECRET_KEY"):
         settings_obj.secret_key = os.getenv("SECRET_KEY")
@@ -85,4 +87,4 @@ def load_settings() -> Settings:
 
 def save_settings(s: Settings) -> None:
     col = get_settings_collection()
-    col.update_one({"_id": "global"}, {"$set": s.dict()}, upsert=True)
+    col.update_one({"_id": "global"}, {"$set": s.model_dump()}, upsert=True)

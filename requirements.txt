@@ -8,6 +8,7 @@ passlib[bcrypt]==1.7.4
 python-jose==3.3.0
 pydantic==2.5.0
 aiofiles==23.2.1
+setuptools==69.0.3
 mongomock==4.1.2
 pymongo==4.6.0
 apprise==1.6.0

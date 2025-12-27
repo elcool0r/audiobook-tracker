@@ -1,7 +1,25 @@
 import time
 from typing import Optional, Dict
 from pathlib import Path
-import datetime
+from datetime import datetime, timedelta, timezone
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=r".*'crypt' is deprecated.*",
+    module="passlib.utils",
+)
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    module=r"jose\.jwt",
+)
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=r"datetime\.datetime\.utcnow\(\) is deprecated",
+)
 
 from fastapi import Request, HTTPException
 from jose import jwt, JWTError
@@ -17,6 +35,12 @@ ACCESS_TOKEN_EXPIRE_SECONDS = 60 * 60 * 24
 TOKEN_NAME = "auth_token"
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def log_auth_event(event: str, username: str, ip: str, user_agent: str, details: str = ""):
     logs_col = get_logs_collection()
     logs_col.insert_one({
@@ -25,20 +49,23 @@ def log_auth_event(event: str, username: str, ip: str, user_agent: str, details:
         "ip": ip,
         "user_agent": user_agent,
         "details": details,
-        "timestamp": datetime.datetime.utcnow()
+        "timestamp": datetime.now(timezone.utc)
     })
 
 
 def is_account_locked(user_doc):
     lock_until = user_doc.get("lock_until")
     if lock_until:
-        if isinstance(lock_until, datetime.datetime):
-            return lock_until > datetime.datetime.utcnow()
+        now = datetime.now(timezone.utc)
+        if isinstance(lock_until, datetime):
+            lock_dt = _ensure_utc(lock_until)
+            return lock_dt > now
         elif isinstance(lock_until, str):
             try:
-                lock_until = datetime.datetime.fromisoformat(lock_until)
-                return lock_until > datetime.datetime.utcnow()
-            except:
+                lock_dt = datetime.fromisoformat(lock_until)
+                lock_dt = _ensure_utc(lock_dt)
+                return lock_dt > now
+            except Exception:
                 pass
     return False
 
@@ -50,7 +77,7 @@ def record_failed_attempt(username: str):
         failed_attempts = user_doc.get("failed_attempts", 0) + 1
         update = {"failed_attempts": failed_attempts}
         if failed_attempts >= 5:
-            lock_until = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+            lock_until = datetime.now(timezone.utc) + timedelta(minutes=15)
             update["lock_until"] = lock_until
         users_col.update_one({"username": username}, {"$set": update})
 
@@ -78,7 +105,14 @@ def create_access_token(data: Dict[str, str], expires_delta: Optional[int] = Non
     key = settings.secret_key
     if not key:
         raise ValueError("SECRET_KEY not set in settings")
-    return jwt.encode(to_encode, key, algorithm=ALGORITHM)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=DeprecationWarning,
+            message=r"datetime\.datetime\.utcnow\(\) is deprecated",
+        )
+        token = jwt.encode(to_encode, key, algorithm=ALGORITHM)
+    return token
 
 
 async def get_current_user(request: Request):

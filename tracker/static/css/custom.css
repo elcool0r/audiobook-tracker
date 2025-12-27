@@ -263,3 +263,21 @@ html[data-bs-theme="dark"],
 		padding-right: 0.75rem;
 	}
 }
+
+/* Collapsible section chevron animation */
+.collapse-icon {
+	transition: transform 0.2s ease;
+}
+
+[data-bs-theme="dark"] .collapse-icon {
+	color: #adb5bd;
+}
+
+[data-bs-theme="light"] .collapse-icon {
+	color: #6c757d;
+}
+
+[data-bs-target="#knownSeriesCollapse"].collapsed .collapse-icon,
+[data-bs-target="#statisticsCollapse"].collapsed .collapse-icon {
+	transform: rotate(-90deg);
+}

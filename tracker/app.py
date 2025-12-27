@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.responses import Response
 from fastapi.exception_handlers import http_exception_handler
+from contextlib import asynccontextmanager
 import logging
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -33,6 +34,7 @@ def convert_for_json(obj):
     else:
         return obj
 from .settings import load_settings, ensure_default_admin
+from .__version__ import __version__
 from .tasks import worker
 from prometheus_client import Gauge, Counter, generate_latest
 
@@ -66,6 +68,21 @@ async def get_admin_user(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     return user
 
+async def _start_worker():
+    ensure_default_admin()
+    ensure_indexes()
+    rebuild_series_user_counts()
+    # Cleanup old logs
+    settings = load_settings()
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=settings.log_retention_days)
+    from .db import get_logs_collection
+    logs_col = get_logs_collection()
+    logs_col.delete_many({"timestamp": {"$lt": cutoff}})
+    worker.start()
+
+async def _stop_worker():
+    worker.stop()
+
 def create_app() -> FastAPI:
     from .settings import load_settings
     settings = load_settings()
@@ -73,10 +90,19 @@ def create_app() -> FastAPI:
         logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
     else:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup
+        await _start_worker()
+        yield
+        # Shutdown
+        await _stop_worker()
+
     app = FastAPI(
         docs_url=_p("/docs"),
         redoc_url=_p("/redoc"),
         openapi_url=_p("/openapi.json"),
+        lifespan=lifespan
     )
     app.state.limiter = limiter
     app.add_middleware(SlowAPIMiddleware)
@@ -101,11 +127,11 @@ def create_app() -> FastAPI:
         date_format = user_doc.get("date_format", "iso")
         library = get_user_library(username)
 
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         def _parse_date(s):
             try:
-                return datetime.fromisoformat((s or "").split("T")[0])
+                return datetime.fromisoformat((s or "").split("T")[0]).replace(tzinfo=timezone.utc)
             except Exception:
                 return None
 
@@ -142,7 +168,7 @@ def create_app() -> FastAPI:
             mins = m % 60
             return f"{h}h {mins}m" if h else f"{mins}m"
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         upcoming_cards = []
         latest_cards = []
         series_rows = []
@@ -272,6 +298,7 @@ def create_app() -> FastAPI:
                 "upcoming": upcoming_cards,
                 "latest": latest_cards,
                 "series": series_rows,
+                "version": __version__,
             },
         )
 
@@ -282,18 +309,18 @@ def create_app() -> FastAPI:
         page = render_frontpage_for_slug(request, slug)
         if page:
             return page
-        return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": None})
+        return RedirectResponse(url=_p("/"), status_code=302)
 
     @app.get(_p("/"), response_class=HTMLResponse)
     async def config_root(request: Request):
         settings = load_settings()
-        return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": None})
+        return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": None, "version": __version__})
 
     @app.get(_p("/login"), response_class=HTMLResponse)
     async def login_get(request: Request):  # , csrf_protect: CsrfProtect = Depends()):
         # csrf_token = csrf_protect.generate_csrf()
         settings = load_settings()
-        resp = templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": None})  # , "csrf_token": csrf_token})
+        resp = templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": None, "version": __version__})  # , "csrf_token": csrf_token})
         # csrf_protect.set_csrf_cookie(resp)
         return resp
 
@@ -315,13 +342,13 @@ def create_app() -> FastAPI:
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
             settings = load_settings()
-            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Invalid credentials"})
+            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Invalid credentials", "version": __version__})
         if is_account_locked(user_doc):
             log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "Account locked")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
             settings = load_settings()
-            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Account locked due to too many failed attempts"})
+            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Account locked due to too many failed attempts", "version": __version__})
         if not verify_password(password, user_doc.get("password_hash", "")):
             record_failed_attempt(username)
             log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "Invalid password")
@@ -329,7 +356,7 @@ def create_app() -> FastAPI:
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
             settings = load_settings()
-            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Invalid credentials"})
+            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Invalid credentials", "version": __version__})
         record_successful_login(username)
         token = create_access_token({"sub": username})
         log_auth_event("login_success", username, request.client.host, request.headers.get("user-agent", ""))
@@ -344,7 +371,7 @@ def create_app() -> FastAPI:
     async def logout(request: Request, user=Depends(get_current_user)):
         from .auth import log_auth_event
         log_auth_event("logout", user["username"], request.client.host, request.headers.get("user-agent", ""))
-        resp = RedirectResponse(url=_p("/login"))
+        resp = RedirectResponse(url=_p("/login"), status_code=302)
         resp.delete_cookie(TOKEN_NAME)
         return resp
 
@@ -360,12 +387,12 @@ def create_app() -> FastAPI:
     @app.get(_p("/settings"), response_class=HTMLResponse)
     async def settings_get(request: Request, user=Depends(get_current_user)):
         settings = load_settings()
-        return templates.TemplateResponse("settings.html", {"request": request, "settings": settings, "user": user})
+        return templates.TemplateResponse("settings.html", {"request": request, "settings": settings, "user": user, "version": __version__})
 
     @app.get(_p("/library"), response_class=HTMLResponse)
     async def library_page(request: Request, user=Depends(get_current_user)):
         settings = load_settings()
-        return templates.TemplateResponse("library.html", {"request": request, "user": user, "settings": settings})
+        return templates.TemplateResponse("library.html", {"request": request, "user": user, "settings": settings, "version": __version__})
 
     @app.get("/home/{slug}", response_class=HTMLResponse)
     async def user_home_page(request: Request, slug: str):
@@ -376,16 +403,16 @@ def create_app() -> FastAPI:
         user_doc = users_col.find_one({"$or": [{"frontpage_slug": slug}, {"username": slug}]})
         if not user_doc:
             settings = load_settings()
-            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "User not found"}, status_code=404)
+            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "User not found", "version": __version__}, status_code=404)
         username = user_doc.get("username")
         date_format = user_doc.get("date_format", "iso")
         library = get_user_library(username)
 
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         def _parse_date(s):
             try:
-                return datetime.fromisoformat((s or "").split("T")[0])
+                return datetime.fromisoformat((s or "").split("T")[0]).replace(tzinfo=timezone.utc)
             except Exception:
                 return None
 
@@ -422,7 +449,7 @@ def create_app() -> FastAPI:
             mins = m % 60
             return f"{h}h {mins}m" if h else f"{mins}m"
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         upcoming_cards = []
         latest_cards = []
         series_rows = []
@@ -557,35 +584,40 @@ def create_app() -> FastAPI:
     @app.get(_p("/series/{asin}"), response_class=HTMLResponse)
     async def view_series_page(request: Request, asin: str):
         # public view for a series by ASIN with public navbar
+        from .db import get_series_collection
+        series_col = get_series_collection()
+        series_doc = series_col.find_one({"asin": asin})
+        if not series_doc:
+            raise HTTPException(status_code=404, detail="Series not found")
         return templates.TemplateResponse(
             "view_series.html",
-            {"request": request, "asin": asin, "public_nav": True, "brand_title": "Audiobook Tracker"},
+            {"request": request, "asin": asin, "public_nav": True, "brand_title": "Audiobook Tracker", "version": __version__},
         )
 
     @app.get(_p("/series-books"), response_class=HTMLResponse)
     async def series_books_page(request: Request, user=Depends(get_current_user)):
         settings = load_settings()
-        return templates.TemplateResponse("series_books.html", {"request": request, "user": user, "settings": settings})
+        return templates.TemplateResponse("series_books.html", {"request": request, "user": user, "settings": settings, "version": __version__})
 
     @app.get(_p("/users"), response_class=HTMLResponse)
     async def users_page(request: Request, user=Depends(get_admin_user)):
         settings = load_settings()
-        return templates.TemplateResponse("users.html", {"request": request, "user": user, "settings": settings})
+        return templates.TemplateResponse("users.html", {"request": request, "user": user, "settings": settings, "version": __version__})
 
     @app.get(_p("/profile"), response_class=HTMLResponse)
     async def profile_page(request: Request, user=Depends(get_current_user)):
         settings = load_settings()
-        return templates.TemplateResponse("profile.html", {"request": request, "user": user, "settings": settings})
+        return templates.TemplateResponse("profile.html", {"request": request, "user": user, "settings": settings, "version": __version__})
 
     @app.get(_p("/series-admin"), response_class=HTMLResponse)
     async def series_admin_page(request: Request, user=Depends(get_admin_user)):
         settings = load_settings()
-        return templates.TemplateResponse("series_admin.html", {"request": request, "user": user, "settings": settings})
+        return templates.TemplateResponse("series_admin.html", {"request": request, "user": user, "settings": settings, "version": __version__})
 
     @app.get(_p("/jobs"), response_class=HTMLResponse)
     async def jobs_page(request: Request, user=Depends(get_admin_user)):
         settings = load_settings()
-        return templates.TemplateResponse("jobs.html", {"request": request, "user": user, "settings": settings})
+        return templates.TemplateResponse("jobs.html", {"request": request, "user": user, "settings": settings, "version": __version__})
 
     @app.get(_p("/logs"), response_class=HTMLResponse)
     async def logs_page(request: Request, user=Depends(get_admin_user)):
@@ -595,7 +627,7 @@ def create_app() -> FastAPI:
         # Convert ObjectId and datetime to string for JSON serialization
         logs = [convert_for_json(log) for log in logs]
         settings = load_settings()
-        return templates.TemplateResponse("logs.html", {"request": request, "user": user, "logs": logs, "settings": settings})
+        return templates.TemplateResponse("logs.html", {"request": request, "user": user, "logs": logs, "settings": settings, "version": __version__})
 
     @app.get("/metrics")
     async def metrics():
@@ -604,23 +636,6 @@ def create_app() -> FastAPI:
         return Response(generate_latest(), media_type="text/plain")
 
     app.include_router(api_router, prefix=_p("/api"))
-
-    @app.on_event("startup")
-    async def _start_worker():
-        ensure_default_admin()
-        ensure_indexes()
-        rebuild_series_user_counts()
-        # Cleanup old logs
-        settings = load_settings()
-        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=settings.log_retention_days)
-        from .db import get_logs_collection
-        logs_col = get_logs_collection()
-        logs_col.delete_many({"timestamp": {"$lt": cutoff}})
-        worker.start()
-
-    @app.on_event("shutdown")
-    async def _stop_worker():
-        worker.stop()
 
     return app
 

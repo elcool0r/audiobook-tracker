@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import base64
 import re
@@ -44,7 +44,8 @@ class LibraryItem(BaseModel):
 
 
 def _now_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    iso = datetime.now(timezone.utc).isoformat()
+    return iso.replace("+00:00", "Z")
 
 
 def _series_payload(doc: Dict[str, Any]) -> Dict[str, Any]:
