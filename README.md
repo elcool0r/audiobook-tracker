@@ -85,6 +85,8 @@ Series admin view
 ### Admin Interface
 
 1. Navigate to `/config` and log in with admin credentials
+   - Default username: `admin`
+   - Default password: `admin`
 2. Add users and configure their settings
 3. Import series by ASIN or search Audible
 4. Monitor background jobs for updates
