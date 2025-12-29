@@ -116,3 +116,4 @@ mongo-data
 cookies.txt
 SECURITY_AUDIT_REPORT.md
 code_review_full.md
+.github/copilot-instructions.md
