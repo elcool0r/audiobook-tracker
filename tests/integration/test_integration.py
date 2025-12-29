@@ -227,6 +227,37 @@ class TestPageAccess:
             # Input element should be present
             assert 'id="frontpageSlug"' in response.text
 
+    def test_profile_api_includes_latest_count(self, client, auth_headers):
+        """API profile should include the latest_count field with a sensible default."""
+        resp = client.get("/config/api/profile", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "latest_count" in data
+        assert isinstance(data["latest_count"], int)
+        assert data["latest_count"] == 4
+
+    def test_update_profile_saves_latest_count(self, client, auth_headers):
+        """Updating profile preferences should store latest_count on the user document."""
+        mock_users_collection = MagicMock()
+        mock_users_collection.find_one.return_value = {"username": "admin", "_id": "admin-id"}
+        mock_users_collection.update_one.return_value = MagicMock(matched_count=1)
+        with patch('tracker.db.get_users_collection', return_value=mock_users_collection), patch('tracker.api.get_users_collection', return_value=mock_users_collection):
+            payload = {"date_format": "iso", "show_narrator_warnings": True, "latest_count": 8}
+            resp = client.post("/config/api/profile/preferences", json=payload, headers=auth_headers)
+            assert resp.status_code == 200
+            mock_users_collection.update_one.assert_called()
+            # Ensure latest_count was included in the update
+            called_args = mock_users_collection.update_one.call_args[0]
+            # called_args is (filter, update)
+            assert called_args[1]["$set"].get("latest_count") == 8
+
+    def test_update_profile_latest_count_validation(self, client, auth_headers):
+        """latest_count must be within the allowed range."""
+        resp = client.post("/config/api/profile/preferences", json={"date_format": "iso", "show_narrator_warnings": True, "latest_count": 0}, headers=auth_headers)
+        assert resp.status_code == 400
+        data = resp.json()
+        assert 'latest_count' in data.get('detail', '') or 'latest_count' in str(data.get('detail', ''))
+
     
     def test_logs_page(self, client, auth_headers):
         """Test accessing the logs page."""

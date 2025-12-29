@@ -87,7 +87,11 @@ html[data-bs-theme="dark"],
 		width: 100%;
 		height: auto;
 		border-radius: 0;
-}
+		-webkit-user-drag: none; /* Safari/Chrome */
+		user-drag: none;
+		-webkit-user-select: none;
+		user-select: none;
+} 
 .upcoming-scroll .row > .col,
 .latest-scroll .row > .col {
 		flex: 0 0 72vw;

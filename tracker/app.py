@@ -126,6 +126,18 @@ def create_app() -> FastAPI:
         username = user_doc.get("username")
         date_format = user_doc.get("date_format", "iso")
         library = get_user_library(username)
+        # How many latest releases to show (user preference).
+        try:
+            num_latest = int(user_doc.get('latest_count') or 4)
+        except Exception:
+            num_latest = 4
+        num_latest = max(1, min(24, num_latest))
+        # How many latest releases to show (user preference).
+        try:
+            num_latest = int(user_doc.get('latest_count') or 4)
+        except Exception:
+            num_latest = 4
+        num_latest = max(1, min(24, num_latest))
 
         from datetime import datetime, timezone
 
@@ -272,7 +284,7 @@ def create_app() -> FastAPI:
 
         upcoming_cards.sort(key=lambda x: x["release_dt"])
         latest_cards.sort(key=lambda x: x["release_dt"], reverse=True)
-        latest_cards = latest_cards[:4]
+        latest_cards = latest_cards[:num_latest]
         series_rows.sort(key=lambda x: (x["title"] or ""))
 
         series_asins = [row.get("asin") for row in series_rows if row.get("asin")]
@@ -434,6 +446,12 @@ def create_app() -> FastAPI:
         username = user_doc.get("username")
         date_format = user_doc.get("date_format", "iso")
         library = get_user_library(username)
+        # How many latest releases to show (user preference).
+        try:
+            num_latest = int(user_doc.get('latest_count') or 4)
+        except Exception:
+            num_latest = 4
+        num_latest = max(1, min(24, num_latest))
 
         from datetime import datetime, timezone
 
@@ -580,7 +598,7 @@ def create_app() -> FastAPI:
 
         upcoming_cards.sort(key=lambda x: x["release_dt"])
         latest_cards.sort(key=lambda x: x["release_dt"], reverse=True)
-        latest_cards = latest_cards[:4]
+        latest_cards = latest_cards[:num_latest]
         series_rows.sort(key=lambda x: (x["title"] or ""))
 
         # Load narrator warnings for series and attach per-card flags
