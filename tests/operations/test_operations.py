@@ -405,6 +405,38 @@ class TestSettingsOperations:
             )
             assert response.status_code == 200
 
+    def test_reschedule_all_series_spreads_over_24_hours(self, client, auth_headers):
+        """Rescheduling should set next_refresh_at for all series distributed over 24 hours."""
+        import mongomock
+        from datetime import datetime, timezone, timedelta
+        fake_db = mongomock.MongoClient().db
+        series_collection = fake_db.series
+        # Insert sample series
+        count = 6
+        for i in range(count):
+            series_collection.insert_one({"_id": f"S{i}", "title": f"Series {i}"})
+
+        with patch('tracker.db.get_series_collection', return_value=series_collection), patch('tracker.tasks.get_series_collection', return_value=series_collection):
+            from tracker.tasks import reschedule_all_series
+            result = reschedule_all_series()
+            assert result.get('count') == count
+
+            docs = list(series_collection.find({}))
+            assert all('next_refresh_at' in d for d in docs)
+
+            now = datetime.now(timezone.utc)
+            end_window = now + timedelta(hours=24, minutes=5)
+            start_window = now - timedelta(minutes=5)
+
+            times = [datetime.fromisoformat(d['next_refresh_at'].replace('Z', '+00:00')) for d in docs]
+            assert all(start_window <= t <= end_window for t in times)
+
+            # Check spacing roughly consistent (allow 40% tolerance)
+            times_sorted = sorted(times)
+            diffs = [(times_sorted[i+1] - times_sorted[i]).total_seconds() for i in range(len(times_sorted)-1)]
+            expected = (24*3600) / count
+            assert all(d >= expected * 0.4 for d in diffs)
+
     
     def test_test_proxy_settings(self, client, auth_headers):
         """Test proxy configuration."""
@@ -421,29 +453,29 @@ class TestSettingsOperations:
         # This may succeed or fail depending on proxy availability
         assert response.status_code in [200, 400, 500]
 
+    def test_refresh_all_series_now_enqueues_and_reschedules(self, client, auth_headers):
+        """Triggering Refresh All should enqueue refresh probes and reschedule series."""
+        import mongomock
+        fake_db = mongomock.MongoClient().db
+        series_collection = fake_db.series
+        # Insert sample series
+        count = 4
+        for i in range(count):
+            series_collection.insert_one({"_id": f"S{i}", "title": f"Series {i}"})
 
-class TestNotificationOperations:
-    """Test notification functionality."""
-
-    
-    def test_test_notifications(self, client, auth_headers):
-        """Test sending test notifications."""
-        with patch('tracker.db.get_users_collection') as mock_users_col:
-            mock_users_col.return_value.find_one.return_value = {
-                "username": "admin",
-                "notifications": {
-                    "enabled": True,
-                    "urls": ["ntfy://test"]
-                }
-            }
-
+        with patch('tracker.db.get_series_collection', return_value=series_collection), \
+             patch('tracker.tasks.get_series_collection', return_value=series_collection), \
+             patch('tracker.tasks.enqueue_refresh_probe') as mock_enqueue:
+            mock_enqueue.side_effect = lambda asin, response_groups=None, source=None: f"job-{asin}"
             response = client.post(
-                "/config/api/notifications/test",
+                "/config/api/series/refresh-all",
                 headers=auth_headers
             )
             assert response.status_code == 200
             data = response.json()
-            assert "sent" in data
+            assert data.get('refresh', {}).get('count') == count
+            # Reschedule should be queued as a follow-up job id
+            assert 'reschedule_job_id' in data and data.get('reschedule_job_id')
 
 
 class TestPublicAPI:

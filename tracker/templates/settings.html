@@ -100,12 +100,10 @@
         <div class="form-text">When enabled, series will be automatically refreshed on a periodic schedule.</div>
       </div>
       <div class="mb-3">
-        <label class="form-label">Manual Refresh Interval (minutes)</label>
-        <input class="form-control" name="manual_refresh_interval_minutes" type="number" min="1" max="1440" value="{{ settings.manual_refresh_interval_minutes }}" />
-        <div class="form-text">The interval over which to spread reschedule times evenly when using "Reschedule All" (1-1440 minutes).</div>
+        <button type="button" class="btn btn-sm btn-outline-primary" id="assignScheduleBtn">Assign new schedule to all series</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="refreshAllBtn">Refresh All Series now</button>
+        <div id="rescheduleResult" class="mt-2" style="display:none"></div>
       </div>
-      <button type="button" class="btn btn-sm btn-outline-primary" id="rescheduleAllBtn">Reschedule All Series</button>
-      <div id="rescheduleResult" class="mt-2" style="display:none"></div>
     </div>
   </div>
 
@@ -173,7 +171,6 @@ async function loadSettings() {
     // proxy_enabled: default OFF unless explicitly true
     document.querySelector('[name=proxy_enabled]').checked = !!currentSettings.proxy_enabled;
     document.querySelector('[name=auto_refresh_enabled]').checked = currentSettings.auto_refresh_enabled || false;
-    document.querySelector('[name=manual_refresh_interval_minutes]').value = currentSettings.manual_refresh_interval_minutes || 10;
     document.querySelector('[name=allow_non_admin_series_search]').checked = currentSettings.allow_non_admin_series_search || false;
     // skip_known_series_search: default ON unless explicitly false
     document.querySelector('[name=skip_known_series_search]').checked = currentSettings.skip_known_series_search !== false;
@@ -194,7 +191,7 @@ form.addEventListener('submit', async (ev) => {
     rate_rps: parseFloat(form.rate_rps.value) || 2.0,
     max_job_history: parseInt(form.max_job_history.value,10) || 100,
     auto_refresh_enabled: form.auto_refresh_enabled.checked || false,
-    manual_refresh_interval_minutes: parseInt(form.manual_refresh_interval_minutes.value,10) || 10,
+    manual_refresh_interval_minutes: (form.manual_refresh_interval_minutes ? parseInt(form.manual_refresh_interval_minutes.value,10) : (currentSettings && currentSettings.manual_refresh_interval_minutes)) || 10,
     response_groups: currentSettings && currentSettings.response_groups || null,
     user_agent: form.user_agent.value || null,
     allow_non_admin_series_search: form.allow_non_admin_series_search.checked || false,
@@ -250,16 +247,16 @@ document.getElementById('testProxyBtn').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('rescheduleAllBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('rescheduleAllBtn');
+document.getElementById('assignScheduleBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('assignScheduleBtn');
   const resultDiv = document.getElementById('rescheduleResult');
   
-  if (!confirm('This will reschedule all series to refresh over the next ' + form.manual_refresh_interval_minutes.value + ' minutes. Continue?')) {
+  if (!confirm('This will assign new schedules to all series evenly over the next 24 hours. Continue?')) {
     return;
   }
   
   btn.disabled = true;
-  btn.textContent = 'Rescheduling...';
+  btn.textContent = 'Assigning...';
   resultDiv.style.display = 'none';
   
   try {
@@ -281,7 +278,43 @@ document.getElementById('rescheduleAllBtn').addEventListener('click', async () =
     resultDiv.innerHTML = `<strong>✗ Error!</strong> ${err.message}`;
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Reschedule All Series';
+    btn.textContent = 'Assign new schedule to all series';
+  }
+});
+
+// Refresh All now handler
+document.getElementById('refreshAllBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('refreshAllBtn');
+  const resultDiv = document.getElementById('rescheduleResult');
+  
+  if (!confirm('This will trigger refresh probes for all series now and then assign a new 24-hour schedule. Continue?')) {
+    return;
+  }
+  
+  btn.disabled = true;
+  btn.textContent = 'Refreshing...';
+  resultDiv.style.display = 'none';
+  
+  try {
+    const resp = await fetch(apiPath('/api/series/refresh-all'), { method: 'POST' });
+    const data = await resp.json();
+
+    resultDiv.style.display = 'block';
+    if (resp.ok) {
+      resultDiv.className = 'alert alert-success mt-2';
+      resultDiv.innerHTML = `<strong>✓ Success!</strong> Refreshed ${data.refresh.count} series; reschedule job ${data.reschedule_job_id} queued.`;
+    } else {
+      resultDiv.className = 'alert alert-warning mt-2';
+      const message = data.error || data.detail || data.message || 'Refresh failed.';
+      resultDiv.innerHTML = `<strong>⚠ ${message}</strong>`;
+    }
+  } catch (err) {
+    resultDiv.style.display = 'block';
+    resultDiv.className = 'alert alert-danger mt-2';
+    resultDiv.innerHTML = `<strong>✗ Error!</strong> ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Refresh All Series now';
   }
 });
 

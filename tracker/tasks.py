@@ -171,6 +171,8 @@ class TaskWorker:
             self._do_delete_series(job)
         elif job.get("type") == "test_job":
             self._do_test_job(job)
+        elif job.get("type") == "reschedule_all_series":
+            self._do_reschedule_all_series(job)
 
     def _do_fetch_series_books(self, job: Job):
         job_id = job.get("job_id")
@@ -258,6 +260,21 @@ class TaskWorker:
         time.sleep(1)
         if job_id:
             self._finish_job(job_id, {"message": "ok"})
+
+    def _do_reschedule_all_series(self, job: Job):
+        """Worker handler that waits for an optional delay and runs reschedule_all_series."""
+        import time
+        job_id = job.get("job_id")
+        delay = int(job.get("delay_seconds", 60) or 60)
+        try:
+            if delay > 0:
+                time.sleep(delay)
+            result = reschedule_all_series()
+            if job_id:
+                self._finish_job(job_id, result)
+        except Exception as exc:
+            if job_id:
+                self._finish_job(job_id, {"error": str(exc)})
 
     def _do_delete_series(self, job: Job):
         job_id = job.get("job_id")
@@ -1128,16 +1145,15 @@ def reschedule_all_series():
     if not all_series:
         return {"count": 0, "message": "No series to reschedule"}
     
-    # Calculate the interval in seconds
-    interval_minutes = settings.manual_refresh_interval_minutes
-    interval_sec = interval_minutes * 60
+    # Use the full 24-hour cycle for rescheduling
+    interval_sec = AUTO_REFRESH_CYCLE_SEC
     
-    # Distribute series evenly across the interval
+    # Distribute series evenly across 24 hours
     count = len(all_series)
     now = _now_dt()
     
     for i, series in enumerate(all_series):
-        # Calculate offset for this series
+        # Calculate offset for this series across the 24h window
         offset_sec = int((i / max(count, 1)) * interval_sec)
         next_refresh = now + _delta_sec(offset_sec)
         next_refresh_iso = next_refresh.isoformat() + "Z"
@@ -1148,4 +1164,35 @@ def reschedule_all_series():
             {"$set": {"next_refresh_at": next_refresh_iso}}
         )
     
-    return {"count": count, "message": f"Rescheduled {count} series over {interval_minutes} minutes"}
+    return {"count": count, "message": f"Rescheduled {count} series over 24 hours"}
+
+
+def refresh_all_series(source: str | None = "manual") -> dict:
+    """Enqueue a refresh probe for every series and return job ids."""
+    series_col = get_series_collection()
+    jobs = []
+    for doc in series_col.find({}):
+        asin = doc.get("_id")
+        if not asin:
+            continue
+        try:
+            jid = enqueue_refresh_probe(str(asin), response_groups=None, source=source)
+            jobs.append(jid)
+        except Exception:
+            # Continue on error for robustness
+            continue
+    return {"count": len(jobs), "job_ids": jobs}
+
+
+def enqueue_reschedule_all_series(username: str | None = None, delay_seconds: int = 60) -> str:
+    """Create a queued job that will run reschedule_all_series after a delay and return the job id."""
+    job_id = str(get_jobs_collection().insert_one({
+        "type": "reschedule_all_series",
+        "username": username,
+        "status": "queued",
+        "delay_seconds": int(delay_seconds),
+        "created_at": _now_iso(),
+    }).inserted_id)
+    # Enqueue the worker job
+    worker.enqueue({"type": "reschedule_all_series", "job_id": job_id, "delay_seconds": int(delay_seconds)})
+    return job_id

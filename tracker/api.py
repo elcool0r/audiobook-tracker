@@ -1344,6 +1344,25 @@ async def api_reschedule_all_series(user=Depends(get_current_user)):
     return {**result, "job_id": job_id}
 
 
+@api_router.post("/series/refresh-all")
+async def api_refresh_all_series(user=Depends(get_current_user)):
+    _require_admin(user)
+    from .tasks import refresh_all_series, enqueue_reschedule_all_series
+    refresh_result = refresh_all_series(source="manual")
+    # Enqueue a follow-up reschedule job to run after a short delay (so refresh probes can complete)
+    reschedule_job_id = enqueue_reschedule_all_series(user.get("username"), delay_seconds=60)
+    now_iso = _utcnow_iso()
+    job_id = str(get_jobs_collection().insert_one({
+        "type": "refresh_all_series",
+        "username": user.get("username"),
+        "status": "done",
+        "result": {"refresh": refresh_result, "reschedule_job_id": reschedule_job_id},
+        "created_at": now_iso,
+        "finished_at": now_iso,
+    }).inserted_id)
+    return {"refresh": refresh_result, "reschedule_job_id": reschedule_job_id, "job_id": job_id}
+
+
 @api_router.get("/database/stats")
 async def api_database_stats(user=Depends(get_current_user)):
     _require_admin(user)
