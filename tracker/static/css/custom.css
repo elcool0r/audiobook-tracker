@@ -245,6 +245,7 @@ html[data-bs-theme="dark"],
 		white-space: normal;
 		text-overflow: unset;
 		overflow-wrap: anywhere;
+		display: inline; /* ensure icon stays attached to the title and does not get clipped */
 	}
 	.all-series-table .series-col {
 		padding-right: 0.5rem;

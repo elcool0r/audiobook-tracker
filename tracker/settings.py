@@ -21,6 +21,7 @@ class Settings(BaseModel):
     allow_non_admin_series_search: bool = True
     skip_known_series_search: bool = True
     default_frontpage_slug: Optional[str] = None
+    users_can_edit_frontpage_slug: bool = False
     log_retention_days: int = 30
     debug_logging: bool = False
     developer_mode: bool = False
@@ -43,6 +44,7 @@ def default_settings() -> Settings:
         allow_non_admin_series_search=True,
         skip_known_series_search=True,
         default_frontpage_slug=None,
+        users_can_edit_frontpage_slug=False,
         log_retention_days=30,
         debug_logging=False,
         developer_mode=False,

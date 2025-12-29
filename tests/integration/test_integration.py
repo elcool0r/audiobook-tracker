@@ -55,6 +55,7 @@ def client():
                 "default_num_results": 10,
                 "log_retention_days": 30,
                 "default_frontpage_slug": "",
+                "users_can_edit_frontpage_slug": False,
                 "secret_key": "test_secret_key"
             }
             with patch('tracker.library.get_user_library') as mock_get_library:
@@ -205,6 +206,26 @@ class TestPageAccess:
         """Test accessing the profile page."""
         response = client.get("/config/profile", headers=auth_headers)
         assert response.status_code == 200
+        # Frontpage slug editing is disabled by default in settings, so the field should not be visible
+        assert "Frontpage slug" not in response.text
+        # We removed the Open frontpage link from the profile as the navbar provides it
+        assert "Open frontpage" not in response.text
+
+    def test_profile_page_frontpage_edit_visible_when_enabled(self, client, auth_headers):
+        """When the admin enables the setting, the profile should show the frontpage slug input."""
+        with patch('tracker.settings.get_settings_collection') as mock_settings_col:
+            mock_settings_col.return_value.find_one.return_value = {
+                "default_num_results": 10,
+                "log_retention_days": 30,
+                "default_frontpage_slug": "",
+                "users_can_edit_frontpage_slug": True,
+                "secret_key": "test_secret_key"
+            }
+            response = client.get("/config/profile", headers=auth_headers)
+            assert response.status_code == 200
+            assert "Frontpage slug" in response.text
+            # Input element should be present
+            assert 'id="frontpageSlug"' in response.text
 
     
     def test_logs_page(self, client, auth_headers):
@@ -246,6 +267,8 @@ class TestAPI:
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, dict)
+        # New setting defaults to False
+        assert data.get('users_can_edit_frontpage_slug') is False
 
     
     def test_api_library_get(self, client, auth_headers):
@@ -270,6 +293,21 @@ class TestAPI:
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
+
+    def test_admin_update_frontpage_blocked_when_setting_disabled(self, client, auth_headers):
+        """When the global setting is disabled, even admins cannot update frontpage slug via profile endpoint."""
+        with patch('tracker.settings.get_settings_collection') as mock_settings_col:
+            mock_settings_col.return_value.find_one.return_value = {
+                "default_num_results": 10,
+                "log_retention_days": 30,
+                "default_frontpage_slug": "",
+                "users_can_edit_frontpage_slug": False,
+                "secret_key": "test_secret_key"
+            }
+            resp = client.post("/config/api/profile/frontpage", json={"slug": "admin-slug"}, headers=auth_headers)
+            assert resp.status_code == 403
+            data = resp.json()
+            assert data.get('detail') == 'Frontpage slug changes are disabled'
 
     
     def test_api_search(self, client, auth_headers):

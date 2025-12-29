@@ -40,6 +40,7 @@
             <option value="us">US (MM/DD/YYYY)</option>
           </select>
         </div>
+        {% if settings.users_can_edit_frontpage_slug %}
         <div class="mb-2">
           <label class="form-label">Frontpage slug</label>
           <div class="input-group input-group-sm">
@@ -47,10 +48,8 @@
             <input class="form-control" id="frontpageSlug" placeholder="your-name" />
           </div>
           <div class="form-text">Letters, numbers, hyphen, underscore. Must be unique. The frontpage is served at /home/&lt;slug&gt;.</div>
-          <div class="mt-2">
-            <a id="frontpageLink" class="btn btn-sm btn-outline-primary" href="#" target="_blank">Open frontpage</a>
-          </div>
         </div>
+        {% endif %}
         <div class="mb-2">
           <div class="form-check">
             <input class="form-check-input" type="checkbox" id="showNarratorWarnings" checked>
@@ -102,13 +101,12 @@ async function loadProfile() {
   document.getElementById('dateFormat').value = p.date_format || 'iso';
   document.getElementById('frontpageSlug').value = p.frontpage_slug || p.username;
   document.getElementById('showNarratorWarnings').checked = p.show_narrator_warnings !== false;
+  // frontpage link removed from profile (navbar provides it); only set input if present
   const fp = p.frontpage_slug || p.username;
-  const link = document.getElementById('frontpageLink');
-    if (link) {
-      const frontpageUrl = `/home/${fp}`;
-      link.href = frontpageUrl;
-      link.textContent = `Open frontpage (${frontpageUrl})`;
-    }
+  const frontpageEl = document.getElementById('frontpageSlug');
+  if (frontpageEl) {
+    frontpageEl.value = fp;
+  }
 }
 
 // --- API Keys handlers --- (DISABLED)

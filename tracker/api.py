@@ -90,6 +90,7 @@ class SettingsSaveRequest(BaseModel):
     proxy_username: str | None = None
     proxy_password: str | None = None
     default_frontpage_slug: str | None = None
+    users_can_edit_frontpage_slug: bool | None = None
     debug_logging: bool | None = None
     developer_mode: bool | None = None
 
@@ -201,6 +202,7 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
         allow_non_admin_series_search=payload.allow_non_admin_series_search if payload.allow_non_admin_series_search is not None else current.allow_non_admin_series_search,
         skip_known_series_search=payload.skip_known_series_search if payload.skip_known_series_search is not None else current.skip_known_series_search,
         default_frontpage_slug=slug,
+        users_can_edit_frontpage_slug=payload.users_can_edit_frontpage_slug if payload.users_can_edit_frontpage_slug is not None else current.users_can_edit_frontpage_slug,
         debug_logging=payload.debug_logging if payload.debug_logging is not None else current.debug_logging,
         developer_mode=payload.developer_mode if payload.developer_mode is not None else current.developer_mode,
     )
@@ -1588,6 +1590,9 @@ async def api_update_profile_settings(payload: ProfileUpdateRequest, user=Depend
 
 @api_router.post("/profile/frontpage")
 async def api_update_frontpage(payload: FrontpageSlugRequest, user=Depends(get_current_user)):
+    settings = load_settings()
+    if not settings.users_can_edit_frontpage_slug:
+        raise HTTPException(status_code=403, detail="Frontpage slug changes are disabled")
     slug = (payload.slug or "").strip()
     if not slug:
         raise HTTPException(status_code=400, detail="Slug cannot be empty")
