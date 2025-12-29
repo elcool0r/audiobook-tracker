@@ -42,7 +42,17 @@ html[data-bs-theme="dark"],
 	scrollbar-width: thin;
 	scrollbar-color: rgba(13, 110, 253, 0.85) rgba(13, 110, 253, 0.2);
 	scroll-padding: 0 1rem;
-	scroll-snap-type: x mandatory;
+	cursor: grab; /* desktop hint */
+} 
+
+/* While dragging: show grabbing cursor and avoid text selection */
+.upcoming-scroll.dragging,
+.latest-scroll.dragging {
+	cursor: grabbing !important;
+	user-select: none;
+	-webkit-user-select: none;
+	-ms-user-select: none;
+	scroll-behavior: auto;
 }
 .upcoming-scroll::-webkit-scrollbar,
 .latest-scroll::-webkit-scrollbar {
@@ -82,8 +92,7 @@ html[data-bs-theme="dark"],
 .latest-scroll .row > .col {
 		flex: 0 0 72vw;
 		max-width: 320px;
-		scroll-snap-align: start;
-}
+} 
 @media (min-width: 576px) {
 		.upcoming-scroll .row > .col,
 		.latest-scroll .row > .col { flex: 0 0 55vw; max-width: 360px; }

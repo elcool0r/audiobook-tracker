@@ -171,5 +171,63 @@
       });
     });
   });
+
+  // Drag-to-scroll carousel for Upcoming / Latest releases (desktop mouse drag & pull)
+  document.addEventListener('DOMContentLoaded', () => {
+    const containers = document.querySelectorAll('.upcoming-scroll, .latest-scroll');
+    containers.forEach(container => {
+      let isDown = false;
+      let startX = 0;
+      let scrollLeftStart = 0;
+      let moved = false;
+      const DRAG_THRESHOLD = 6; // pixels before we treat it as a drag
+
+      // Improve cursor & touch behavior
+      container.style.cursor = 'grab';
+      container.style.touchAction = 'pan-y';
+
+      container.addEventListener('pointerdown', (e) => {
+        isDown = true;
+        moved = false;
+        startX = e.clientX;
+        scrollLeftStart = container.scrollLeft;
+        try { container.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+        container.classList.add('dragging');
+        container.style.scrollBehavior = 'auto';
+      });
+
+      container.addEventListener('pointermove', (e) => {
+        if (!isDown) return;
+        const dx = e.clientX - startX;
+        if (Math.abs(dx) > DRAG_THRESHOLD) moved = true;
+        container.scrollLeft = scrollLeftStart - dx;
+      });
+
+      const finishDrag = (e) => {
+        if (!isDown) return;
+        isDown = false;
+        try { container.releasePointerCapture && container.releasePointerCapture(e && e.pointerId); } catch (err) { /* ignore */ }
+        container.classList.remove('dragging');
+        container.style.scrollBehavior = 'smooth';
+
+        if (!moved) return;
+
+        // Prevent an accidental click right after a drag
+        const preventClick = (clickEvent) => {
+          clickEvent.preventDefault();
+          clickEvent.stopPropagation();
+        };
+        container.addEventListener('click', preventClick, true);
+        // Remove the temporary click block shortly after so normal clicks work again
+        setTimeout(() => container.removeEventListener('click', preventClick, true), 50);
+      };
+
+      ['pointerup','pointercancel','pointerleave'].forEach(evt => container.addEventListener(evt, finishDrag));
+
+      // Visual cursor changes while dragging
+      container.addEventListener('pointerdown', () => container.style.cursor = 'grabbing');
+      ['pointerup','pointercancel','pointerleave'].forEach(evt => container.addEventListener(evt, () => container.style.cursor = 'grab'));
+    });
+  });
   </script>
 {% endblock %}
