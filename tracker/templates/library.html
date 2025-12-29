@@ -322,13 +322,13 @@ function renderLibraryTable() {
     const tdActions = document.createElement('td');
     if (it.asin) {
       const removeBtn = document.createElement('button');
-      removeBtn.className = 'btn btn-sm btn-outline-danger';
+      removeBtn.className = 'btn btn-sm btn-outline-danger two-step-confirm';
       removeBtn.textContent = 'Remove';
       removeBtn.onclick = async () => {
         // Two-step confirm without browser alert
         if (removeBtn.dataset.confirmed !== 'true') {
           removeBtn.dataset.confirmed = 'true';
-          removeBtn.textContent = 'Confirm remove';
+          removeBtn.textContent = 'Confirm';
           removeBtn.classList.remove('btn-outline-danger');
           removeBtn.classList.add('btn-danger');
           setTimeout(() => {

@@ -278,6 +278,13 @@ html[data-bs-theme="dark"],
 	}
 }
 
+/* Two-step confirm buttons: reserve width to avoid layout shift when label changes */
+.two-step-confirm {
+	min-width: 14ch; /* long enough for 'Confirm remove' / 'Confirm delete' */
+	white-space: nowrap;
+	text-align: center;
+}
+
 /* Collapsible section chevron animation */
 .collapse-icon {
 	transition: transform 0.2s ease;

@@ -340,13 +340,13 @@ function render(list) {
     
     
     const delBtn = document.createElement('button');
-    delBtn.className = 'btn btn-sm btn-outline-danger ms-2';
+    delBtn.className = 'btn btn-sm btn-outline-danger ms-2 two-step-confirm';
     delBtn.textContent = 'Delete';
     delBtn.onclick = async () => {
       // Two-step confirm without browser alert
       if (delBtn.dataset.confirmed !== 'true') {
         delBtn.dataset.confirmed = 'true';
-        delBtn.textContent = 'Confirm delete';
+        delBtn.textContent = 'Confirm';
         delBtn.classList.remove('btn-outline-danger');
         delBtn.classList.add('btn-danger');
         setTimeout(() => {
