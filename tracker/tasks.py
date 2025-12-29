@@ -187,24 +187,25 @@ class TaskWorker:
                 logging.info(f"Starting job {job_id} for series {asin}")
             response_groups = job.get("response_groups") or settings.response_groups or DEFAULT_RESPONSE_GROUPS
             books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
-            processed_books = set_series_books(asin, books)
-            touch_series_fetched(asin)
-            narrator_warnings = compute_narrator_warnings(processed_books, asin)
-            get_series_collection().update_one({"_id": asin}, {"$set": {"narrator_warnings": narrator_warnings}})
+            target_asin = parent_asin or asin
+            processed_books = set_series_books(target_asin, books)
+            touch_series_fetched(target_asin)
+            narrator_warnings = compute_narrator_warnings(processed_books, target_asin)
+            get_series_collection().update_one({"_id": target_asin}, {"$set": {"narrator_warnings": narrator_warnings}})
             
             # Extract title and URL from parent object and update series document
             if isinstance(parent_obj, dict):
                 series_title = parent_obj.get("title") or parent_obj.get("publication_name") or parent_obj.get("product_title")
                 series_url = parent_obj.get("url")
                 if series_title or series_url:
-                    ensure_series_document(asin, series_title, series_url)
+                    ensure_series_document(target_asin, series_title, series_url)
             
             # Save raw parent series JSON if we fetched it
             if isinstance(parent_obj, dict):
-                # Store raw under both the requested asin and the parent asin (if different)
-                set_series_raw(asin, parent_obj)
+                # Store raw under the target asin (parent when available) and also under the requested asin if different
+                set_series_raw(target_asin, parent_obj)
                 if parent_asin and parent_asin != asin:
-                    set_series_raw(parent_asin, parent_obj)
+                    set_series_raw(asin, parent_obj)
             
             # Fallback: if we have no raw data and found children, try fetching parent ASIN directly
             # This handles cases where _fetch_series_books_internal succeeded in finding books but didn't return parent_obj
@@ -332,60 +333,14 @@ class TaskWorker:
                         set_series_raw(asin, parent_obj_full)
                         if parent_asin_full and parent_asin_full != asin:
                             set_series_raw(parent_asin_full, parent_obj_full)
-                    processed_books = set_series_books(asin, books)
+                    target_id = parent_id
+                    processed_books = set_series_books(target_id, books)
                     books_current = processed_books
-                    
-                    # Compute narrator warnings
+
+                    # Compute narrator warnings using the shared helper
                     if books:
-                        def get_sequence(book, series_asin):
-                            for s in book.get("series", []):
-                                if s.get("asin") == series_asin:
-                                    try:
-                                        return int(s.get("sequence", 999))
-                                    except ValueError:
-                                        return 999
-                            return 999
-                        
-                        narrator_warnings = []
-                        if books:
-                            # Sort books by sequence in the series
-                            books_sorted = sorted(books, key=lambda b: get_sequence(b, asin))
-                            first_book = books_sorted[0]
-                            narrators = first_book.get("narrators")
-                            if isinstance(narrators, list):
-                                if narrators and isinstance(narrators[0], dict):
-                                    primary_narrator = narrators[0].get("name")
-                                elif narrators and isinstance(narrators[0], str):
-                                    primary_narrator = narrators[0]
-                                else:
-                                    primary_narrator = None
-                            elif isinstance(narrators, str):
-                                parts = [p.strip() for p in narrators.split(",") if p.strip()]
-                                primary_narrator = parts[0] if parts else None
-                            else:
-                                primary_narrator = None
-                            if primary_narrator:
-                                for book in books_sorted[1:]:
-                                    if book.get("ignore_narrator_warning"):
-                                        continue
-                                    narrators = book.get("narrators")
-                                    if isinstance(narrators, list):
-                                        if narrators and isinstance(narrators[0], dict):
-                                            book_primary = narrators[0].get("name")
-                                        elif narrators and isinstance(narrators[0], str):
-                                            book_primary = narrators[0]
-                                        else:
-                                            book_primary = None
-                                    elif isinstance(narrators, str):
-                                        parts = [p.strip() for p in narrators.split(",") if p.strip()]
-                                        book_primary = parts[0] if parts else None
-                                    else:
-                                        book_primary = None
-                                    if book_primary != primary_narrator:
-                                        narrator_warnings.append(book.get("title", "Unknown"))
-                        # Filter out ignored books
-                        narrator_warnings = [title for title in narrator_warnings if not any(b.get("ignore_narrator_warning") for b in books if b.get("title") == title)]
-                        series_col.update_one({"_id": asin}, {"$set": {"narrator_warnings": narrator_warnings}})
+                        narrator_warnings = compute_narrator_warnings(books_current, target_id)
+                        series_col.update_one({"_id": target_id}, {"$set": {"narrator_warnings": narrator_warnings}})
                 else:
                     # Update raw parent only if we fetched it, but skip expensive child fetch
                     if isinstance(parent_obj, dict):

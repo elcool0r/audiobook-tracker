@@ -532,12 +532,13 @@ async def api_public_series_info(asin: str):
     response_groups = settings.response_groups or DEFAULT_RESPONSE_GROUPS
     books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
     if books:
-        set_series_books(asin, books)
+        target_asin = parent_asin or asin
+        set_series_books(target_asin, books)
         if isinstance(parent_obj, dict):
-            set_series_raw(asin, parent_obj)
+            set_series_raw(target_asin, parent_obj)
             if parent_asin and parent_asin != asin:
                 set_series_raw(parent_asin, parent_obj)
-        updated = get_series_document(asin)
+        updated = get_series_document(target_asin)
         if updated:
             return updated
     if series:
@@ -555,9 +556,10 @@ async def api_public_series_books(asin: str):
     response_groups = settings.response_groups or DEFAULT_RESPONSE_GROUPS
     books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
     if books:
-        set_series_books(asin, books)
+        target_asin = parent_asin or asin
+        set_series_books(target_asin, books)
         if isinstance(parent_obj, dict):
-            set_series_raw(asin, parent_obj)
+            set_series_raw(target_asin, parent_obj)
             if parent_asin and parent_asin != asin:
                 set_series_raw(parent_asin, parent_obj)
     return books
@@ -569,10 +571,12 @@ async def api_series_books(asin: str, user=Depends(get_current_user)):
     response_groups = settings.response_groups or DEFAULT_RESPONSE_GROUPS
     books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
     if isinstance(parent_obj, dict):
-        set_series_raw(asin, parent_obj)
+        target_asin = parent_asin or asin
+        set_series_raw(target_asin, parent_obj)
         if parent_asin and parent_asin != asin:
             set_series_raw(parent_asin, parent_obj)
-    set_series_books(asin, books)
+    target_asin = parent_asin or asin
+    set_series_books(target_asin, books)
     return books
 
 

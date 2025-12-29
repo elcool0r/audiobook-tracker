@@ -155,7 +155,18 @@ def compute_narrator_warnings(books: List[Dict[str, Any]] | None, series_asin: s
     valid_books = [book for book in books if isinstance(book, dict)]
     if not valid_books:
         return []
-    sorted_books = sorted(valid_books, key=lambda book: _book_sequence(book, series_asin))
+
+    def _release_dt(book):
+        rd = book.get("release_date")
+        if isinstance(rd, str) and rd.strip():
+            try:
+                return datetime.fromisoformat(rd.split("T")[0])
+            except Exception:
+                return None
+        return None
+
+    # Sort primarily by declared sequence (if present), falling back to release date so the first book is the earliest by sequence/date
+    sorted_books = sorted(valid_books, key=lambda book: (_book_sequence(book, series_asin), _release_dt(book) or datetime.max))
     first_book = sorted_books[0]
     primary_narrator = _get_primary_narrator(first_book.get("narrators"))
     if not primary_narrator:
@@ -303,6 +314,17 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
         if img:
             cover_image = img
             break
+
+    # Sort processed books so UI and computations have deterministic ordering: by sequence then by release date (oldest first)
+    def _parse_date_str(ds):
+        if isinstance(ds, str) and ds.strip():
+            try:
+                return datetime.fromisoformat(ds.split("T")[0])
+            except Exception:
+                return None
+        return None
+
+    processed_books.sort(key=lambda b: (_book_sequence(b, asin), _parse_date_str(b.get("release_date")) or datetime.max))
 
     # Only update books/fetched_at; don't create new docs (series doc should exist from ensure_series_document)
     result = series_col.update_one(
@@ -614,6 +636,7 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
     books: List[Dict[str, Any]] = []
     for entry in child_entries:
         child_asin = entry.get("asin")
+        rel = entry.get("rel", {}) or {}
         if not child_asin:
             continue
         child_obj = asyncio.run(_load_product(child_asin))
@@ -625,6 +648,16 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
         book = _book_summary(child_obj)
         if not book.get("asin"):
             book["asin"] = child_asin
+        # Attach series relationship info so sequence can be detected later
+        try:
+            seq = rel.get("sequence") if isinstance(rel, dict) else None
+            if not seq:
+                seq = rel.get("sort") if isinstance(rel, dict) else None
+        except Exception:
+            seq = None
+        # Use parent_asin (determined earlier) as the series ASIN for relationship entries
+        primary_series_asin = parent_asin or series_asin
+        book["series"] = [{"asin": primary_series_asin, "sequence": seq}] if primary_series_asin else []
         # fetch image data and store
         try:
             img_resp = requests.get(book["image"], timeout=10, proxies=proxies)
