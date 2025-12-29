@@ -507,6 +507,12 @@ class TestPublicAPI:
             response = client.get("/config/api/public/series/TEST123/books")
             assert response.status_code == 200
 
+    def test_frontpage_preventclick_allows_links(self):
+        """The drag-to-scroll click-prevent logic should allow clicks on links/buttons."""
+        import pathlib
+        tpl = pathlib.Path('tracker/templates/frontpage.html').read_text()
+        assert "target.closest('a[href], button" in tpl or 'target.closest("a[href], button' in tpl or "target.closest('a[href]" in tpl
+
 
 class TestDeveloperEndpoints:
     """Test developer-only endpoints."""

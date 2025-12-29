@@ -213,8 +213,15 @@
 
         if (!moved) return;
 
-        // Prevent an accidental click right after a drag
+        // Prevent an accidental click right after a drag, but allow clicks on links/buttons
         const preventClick = (clickEvent) => {
+          try {
+            const target = clickEvent.target;
+            if (target && target.closest && target.closest('a[href], button, input[type="button"], .btn')) {
+              // Allow links and buttons to function immediately after dragging
+              return;
+            }
+          } catch (err) { /* ignore */ }
           clickEvent.preventDefault();
           clickEvent.stopPropagation();
         };
