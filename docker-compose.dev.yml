@@ -1,5 +1,6 @@
 services:
   mongo:
+    container_name: mongo-dev
     image: mongo:7
     restart: unless-stopped
     environment:
@@ -17,6 +18,7 @@ services:
       retries: 5
 
   tracker:
+    container_name: audiobook-tracker-dev
     build: 
       context: .
       args:
@@ -30,9 +32,3 @@ services:
       SECRET_KEY: supersecretkey123456789
     ports:
       - "8000:8000"
-    # labels:
-    #   - "traefik.enable=true"
-    #   - "traefik.http.routers.audiobook.rule=Host(`audiobook-tracker.com`)"
-    #   - "traefik.http.routers.audiobook.tls=true"
-    #   - "traefik.http.routers.audiobook.tls.certresolver=letsencrypt"
-    #   - "traefik.http.services.audiobook.loadbalancer.server.port=8000"

@@ -189,6 +189,9 @@ class TaskWorker:
                 logging.info(f"Starting job {job_id} for series {asin}")
             response_groups = job.get("response_groups") or settings.response_groups or DEFAULT_RESPONSE_GROUPS
             books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
+            # Check for placeholder issue_date and warn but continue
+            if isinstance(parent_obj, dict) and parent_obj.get("issue_date") == "2200-01-01":
+                logging.warning(f"Series {asin} has placeholder issue_date (2200-01-01), proceeding with fetch")
             target_asin = parent_asin or asin
             processed_books = set_series_books(target_asin, books)
             touch_series_fetched(target_asin)

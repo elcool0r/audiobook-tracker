@@ -427,11 +427,29 @@ async function searchSeries(query, num) {
       btn.classList.add('btn-outline-secondary');
     }
     btn.onclick = async () => {
+      const originalText = btn.textContent;
       btn.disabled = true;
       btn.textContent = 'Adding...';
-      await fetch(apiPath('/api/library'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: s.title, asin: s.asin || null, url: s.url || null }) });
-      await Promise.all([fetchLibrary(), loadKnownSeries()]);
-      // Clear search results
+      // Don't await the POST to avoid blocking UI for multiple adds
+      fetch(apiPath('/api/library'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: s.title, asin: s.asin || null, url: s.url || null }) })
+        .then(async (r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          // Refresh UI after successful add
+          await Promise.all([fetchLibrary(), loadKnownSeries()]);
+          // Clear search results only if this was the last add or something, but for now, keep it simple
+        })
+        .catch(e => {
+          console.error('Add failed:', e);
+          btn.textContent = 'Failed';
+          setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2000);
+        })
+        .finally(() => {
+          if (btn.textContent === 'Adding...') {
+            btn.textContent = 'Added';
+            setTimeout(() => { btn.disabled = true; btn.textContent = '✓'; }, 1000);
+          }
+        });
+      // Clear search results immediately for better UX
       container.innerHTML = '';
       document.getElementById('seriesSearchForm').reset();
     };

@@ -480,10 +480,10 @@ async def api_add_library(payload: LibraryAddRequest, user=Depends(get_current_u
 
     item = LibraryItem(title=title, asin=payload.asin, url=_clean_url(payload.url))
     skip_fetch = bool(payload.skip_fetch)
-    added = await add_to_library(user["username"], item, skip_fetch=skip_fetch)
+    added = await add_to_library(user["username"], item, skip_fetch=True)  # Always skip fetch for speed
 
     job_id = None
-    if added.asin and not skip_fetch:
+    if added.asin:
         try:
             job_id = enqueue_fetch_series_books(user["username"], added.asin)
         except Exception:

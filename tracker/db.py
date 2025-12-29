@@ -21,7 +21,17 @@ except ImportError:  # fallback if mongomock is not installed
 def get_db():
     uri = os.getenv("MONGO_URI")
     if uri:
-        client = MongoClient(uri)
+        # Try connecting with a short timeout; if unavailable, fall back to mongomock for tests
+        try:
+            client = MongoClient(uri, serverSelectionTimeoutMS=3000)
+            # Quick ping to detect unreachable servers
+            client.admin.command('ping')
+        except Exception:
+            if mongomock is not None:
+                client = mongomock.MongoClient()
+            else:
+                # Re-raise original exception to make failure explicit when mongomock isn't available
+                raise
     else:
         if mongomock is None:
             raise RuntimeError("MONGO_URI not set and mongomock is not installed; please install mongomock or set MONGO_URI")

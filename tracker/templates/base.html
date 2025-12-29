@@ -44,7 +44,7 @@
               <li class="nav-item"><a class="nav-link" href="{{ base_path }}/profile">Profile</a></li>
               {% endif %}
               {% if user %}
-              <li class="nav-item"><a class="nav-link" href="/home/{{ user.frontpage_slug }}" title="Public Page" target="_blank">🌐</a></li>
+              <li class="nav-item"><a class="nav-link" href="/home/{{ user.frontpage_slug or user.username }}" title="Public Page" target="_blank">🌐</a></li>
               {% endif %}
             {% endif %}
             <li class="nav-item">

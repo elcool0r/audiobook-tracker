@@ -343,9 +343,24 @@ function render(list) {
     delBtn.className = 'btn btn-sm btn-outline-danger ms-2';
     delBtn.textContent = 'Delete';
     delBtn.onclick = async () => {
-      const confirmMsg = `Are you sure you want to delete "${s.title || 'this series'}" (${s.asin})?\n\nThis will remove the series and all associated book data. This action cannot be undone.`;
-      if (!confirm(confirmMsg)) return;
-      delBtn.disabled = true; delBtn.textContent = 'Deleting...';
+      // Two-step confirm without browser alert
+      if (delBtn.dataset.confirmed !== 'true') {
+        delBtn.dataset.confirmed = 'true';
+        delBtn.textContent = 'Confirm delete';
+        delBtn.classList.remove('btn-outline-danger');
+        delBtn.classList.add('btn-danger');
+        setTimeout(() => {
+          if (delBtn.dataset.confirmed === 'true') {
+            delBtn.dataset.confirmed = '';
+            delBtn.textContent = 'Delete';
+            delBtn.classList.add('btn-outline-danger');
+            delBtn.classList.remove('btn-danger');
+          }
+        }, 3000);
+        return;
+      }
+      delBtn.disabled = true;
+      delBtn.textContent = 'Deleting...';
       const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(s.asin)}`), { method: 'DELETE' });
       if (resp.ok) {
         await loadSeries();
