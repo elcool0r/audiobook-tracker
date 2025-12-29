@@ -177,6 +177,42 @@ function render(list) {
     const nextRefresh = document.createElement('td'); nextRefresh.textContent = formatDateTime(s.next_refresh_at); tr.appendChild(nextRefresh);
     const actions = document.createElement('td');
     actions.className = 'text-end';
+
+    // Series-level ignore narrator change toggle (visible to admins when series has warnings or is currently ignored)
+    if (s.asin && ((Array.isArray(s.narrator_warnings) && s.narrator_warnings.length > 0) || Boolean(s.ignore_narrator_warnings))) {
+      const ignoreSeriesBtn = document.createElement('button');
+      ignoreSeriesBtn.className = 'btn btn-sm ' + (s.ignore_narrator_warnings ? 'btn-outline-success' : 'btn-outline-secondary') + ' me-2';
+      ignoreSeriesBtn.textContent = s.ignore_narrator_warnings ? 'Unignore narrator changes' : 'Ignore narrator changes';
+      ignoreSeriesBtn.disabled = !s.asin;
+      ignoreSeriesBtn.onclick = async () => {
+        if (!s.asin) return;
+        ignoreSeriesBtn.disabled = true;
+        const desired = !Boolean(s.ignore_narrator_warnings);
+        ignoreSeriesBtn.textContent = desired ? 'Setting...' : 'Clearing...';
+        try {
+          const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(s.asin)}/ignore-narrator-series`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ignore: desired }),
+          });
+          if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error(txt || 'Failed');
+          }
+          const data = await resp.json();
+          s.ignore_narrator_warnings = Boolean(data.ignore_narrator_warnings);
+          // Refresh list to pick up updated book flags and warnings
+          loadSeries(currentPage);
+          return;
+        } catch (err) {
+          alert(err?.message || 'Failed to toggle series ignore');
+        } finally {
+          ignoreSeriesBtn.disabled = false;
+        }
+      };
+      actions.appendChild(ignoreSeriesBtn);
+    }
+
     const btn = document.createElement('button');
     btn.className = 'btn btn-sm btn-outline-primary';
     btn.textContent = 'Refresh books';
@@ -319,6 +355,8 @@ function render(list) {
       }
     };
     actions.appendChild(delBtn);
+
+
     
     tr.appendChild(actions);
     tbody.appendChild(tr);

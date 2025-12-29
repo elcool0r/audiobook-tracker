@@ -131,11 +131,6 @@ async def get_current_user(request: Request):
         user_doc = get_users_collection().find_one({"username": username})
         if not user_doc:
             raise HTTPException(status_code=401, detail="User not found")
-        return {
-            "username": username,
-            "role": user_doc.get("role", "user"),
-            "date_format": user_doc.get("date_format", "iso"),
-            "frontpage_slug": user_doc.get("frontpage_slug") or username,
-        }
+        return user_doc
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")

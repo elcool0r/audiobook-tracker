@@ -219,13 +219,53 @@ class TestLibraryOperations:
                 headers=auth_headers
             )
             assert response.status_code == 200
-
             data = response.json()
             assert data.get("item", {}).get("asin") == "B0DDLHDJD9"
             assert data.get("job_id") == "job-123"
-
             saved_entry = user_collection.find_one({"username": "admin", "series_asin": "B0DDLHDJD9"})
             assert saved_entry is not None
+
+    def test_series_level_ignore_toggle(self, client, auth_headers):
+        """Test toggling series-level ignore and its effect on books and warnings."""
+        fake_db = mongomock.MongoClient().db
+        series_collection = fake_db.series
+        # Two books with different narrators so warnings should include the second
+        books = [
+            {"title": "Book 1", "asin": "B1", "narrators": ["Narrator A"]},
+            {"title": "Book 2", "asin": "B2", "narrators": ["Narrator B"]},
+        ]
+        # Start with an existing warning on Book 2
+        series_collection.insert_one({"_id": "S_TEST", "title": "Test Series", "books": books, "narrator_warnings": ["Book 2"], "ignore_narrator_warnings": False})
+
+        with patch('tracker.api.get_series_collection', return_value=series_collection), patch('tracker.library.get_series_collection', return_value=series_collection):
+            # Enable series-level ignore
+            resp = client.post("/config/api/series/S_TEST/ignore-narrator-series", json={"ignore": True}, headers=auth_headers)
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data.get("ignore_narrator_warnings") is True
+
+            doc = series_collection.find_one({"_id": "S_TEST"})
+            assert doc.get("ignore_narrator_warnings") is True
+            # All books should be marked ignored and flagged as set by series
+            for b in doc.get("books", []):
+                assert b.get("ignore_narrator_warning") is True
+                assert b.get("ignore_narrator_warning_set_by_series") is True
+            # Warnings cleared
+            assert doc.get("narrator_warnings") == []
+
+            # Disable series-level ignore and ensure per-book flags set by series are reverted and warnings recomputed
+            resp = client.post("/config/api/series/S_TEST/ignore-narrator-series", json={"ignore": False}, headers=auth_headers)
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data.get("ignore_narrator_warnings") is False
+
+            doc = series_collection.find_one({"_id": "S_TEST"})
+            assert doc.get("ignore_narrator_warnings") is False
+            for b in doc.get("books", []):
+                # series-set flags should be removed
+                assert not b.get("ignore_narrator_warning_set_by_series")
+            # Since the books have different narrators, warnings should now include Book 2 again
+            assert "Book 2" in (doc.get("narrator_warnings") or [])
 
     
     def test_remove_from_library(self, client, auth_headers):

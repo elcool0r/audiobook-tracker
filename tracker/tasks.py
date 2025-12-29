@@ -15,6 +15,7 @@ from .library import (
     fetch_series_books,
     is_book_hidden,
     set_series_books,
+    compute_narrator_warnings,
     set_series_raw,
     set_series_next_refresh,
     touch_series_fetched,
@@ -186,8 +187,10 @@ class TaskWorker:
                 logging.info(f"Starting job {job_id} for series {asin}")
             response_groups = job.get("response_groups") or settings.response_groups or DEFAULT_RESPONSE_GROUPS
             books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
-            set_series_books(asin, books)
+            processed_books = set_series_books(asin, books)
             touch_series_fetched(asin)
+            narrator_warnings = compute_narrator_warnings(processed_books, asin)
+            get_series_collection().update_one({"_id": asin}, {"$set": {"narrator_warnings": narrator_warnings}})
             
             # Extract title and URL from parent object and update series document
             if isinstance(parent_obj, dict):
@@ -331,12 +334,69 @@ class TaskWorker:
                             set_series_raw(parent_asin_full, parent_obj_full)
                     processed_books = set_series_books(asin, books)
                     books_current = processed_books
+                    
+                    # Compute narrator warnings
+                    if books:
+                        def get_sequence(book, series_asin):
+                            for s in book.get("series", []):
+                                if s.get("asin") == series_asin:
+                                    try:
+                                        return int(s.get("sequence", 999))
+                                    except ValueError:
+                                        return 999
+                            return 999
+                        
+                        narrator_warnings = []
+                        if books:
+                            # Sort books by sequence in the series
+                            books_sorted = sorted(books, key=lambda b: get_sequence(b, asin))
+                            first_book = books_sorted[0]
+                            narrators = first_book.get("narrators")
+                            if isinstance(narrators, list):
+                                if narrators and isinstance(narrators[0], dict):
+                                    primary_narrator = narrators[0].get("name")
+                                elif narrators and isinstance(narrators[0], str):
+                                    primary_narrator = narrators[0]
+                                else:
+                                    primary_narrator = None
+                            elif isinstance(narrators, str):
+                                parts = [p.strip() for p in narrators.split(",") if p.strip()]
+                                primary_narrator = parts[0] if parts else None
+                            else:
+                                primary_narrator = None
+                            if primary_narrator:
+                                for book in books_sorted[1:]:
+                                    if book.get("ignore_narrator_warning"):
+                                        continue
+                                    narrators = book.get("narrators")
+                                    if isinstance(narrators, list):
+                                        if narrators and isinstance(narrators[0], dict):
+                                            book_primary = narrators[0].get("name")
+                                        elif narrators and isinstance(narrators[0], str):
+                                            book_primary = narrators[0]
+                                        else:
+                                            book_primary = None
+                                    elif isinstance(narrators, str):
+                                        parts = [p.strip() for p in narrators.split(",") if p.strip()]
+                                        book_primary = parts[0] if parts else None
+                                    else:
+                                        book_primary = None
+                                    if book_primary != primary_narrator:
+                                        narrator_warnings.append(book.get("title", "Unknown"))
+                        # Filter out ignored books
+                        narrator_warnings = [title for title in narrator_warnings if not any(b.get("ignore_narrator_warning") for b in books if b.get("title") == title)]
+                        series_col.update_one({"_id": asin}, {"$set": {"narrator_warnings": narrator_warnings}})
                 else:
                     # Update raw parent only if we fetched it, but skip expensive child fetch
                     if isinstance(parent_obj, dict):
                         set_series_raw(asin, parent_obj)
                         if parent_asin and parent_asin != asin:
                             set_series_raw(parent_asin, parent_obj)
+
+                narrator_warnings = compute_narrator_warnings(books_current, asin)
+                if settings and getattr(settings, "debug_logging", False):
+                    logging.info(f"Computed {len(narrator_warnings)} narrator warnings for {asin}")
+                series_col.update_one({"_id": asin}, {"$set": {"narrator_warnings": narrator_warnings}})
 
                 # Touch fetched timestamp
                 touch_series_fetched(asin)
@@ -992,9 +1052,14 @@ def _rebalance_auto_refresh(reference: datetime | None = None):
     if not docs:
         return
     total = len(docs)
-    interval = AUTO_REFRESH_CYCLE_SEC / total
+    # Use a safe fallback in case the module-level constant isn't available at runtime
+    cycle_sec = globals().get("AUTO_REFRESH_CYCLE_SEC", 24 * 60 * 60)
+    try:
+        interval = cycle_sec / total
+    except Exception:
+        interval = cycle_sec
     if interval <= 0:
-        interval = AUTO_REFRESH_CYCLE_SEC
+        interval = cycle_sec
     now = reference
     offset_acc = interval
     from datetime import timezone

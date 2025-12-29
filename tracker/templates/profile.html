@@ -51,6 +51,12 @@
             <a id="frontpageLink" class="btn btn-sm btn-outline-primary" href="#" target="_blank">Open frontpage</a>
           </div>
         </div>
+        <div class="mb-2">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="showNarratorWarnings" checked>
+            <label class="form-check-label" for="showNarratorWarnings">Show narrator warnings</label>
+          </div>
+        </div>
         <button class="btn btn-sm btn-primary" id="savePrefs">Save Preferences</button>
         <div class="alert alert-success mt-2" id="prefOk" style="display:none;">Preferences saved</div>
         <div class="alert alert-danger mt-2" id="prefErr" style="display:none;"></div>
@@ -95,6 +101,7 @@ async function loadProfile() {
   document.getElementById('p-libcount').textContent = p.library_count;
   document.getElementById('dateFormat').value = p.date_format || 'iso';
   document.getElementById('frontpageSlug').value = p.frontpage_slug || p.username;
+  document.getElementById('showNarratorWarnings').checked = p.show_narrator_warnings !== false;
   const fp = p.frontpage_slug || p.username;
   const link = document.getElementById('frontpageLink');
     if (link) {
@@ -172,7 +179,7 @@ document.getElementById('savePrefs').addEventListener('click', async () => {
   const dateFormat = document.getElementById('dateFormat').value;
   const frontpageSlug = document.getElementById('frontpageSlug').value.trim();
   
-  const r1 = await fetch(apiPath('/api/profile/preferences'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date_format: dateFormat }) });
+  const r1 = await fetch(apiPath('/api/profile/preferences'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date_format: dateFormat, show_narrator_warnings: document.getElementById('showNarratorWarnings').checked }) });
   const r2 = await fetch(apiPath('/api/profile/frontpage'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug: frontpageSlug }) });
   
   const ok = document.getElementById('prefOk');

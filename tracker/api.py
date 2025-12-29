@@ -25,6 +25,7 @@ from .library import (
     _build_proxies,
     visible_books,
     visible_book_count,
+    compute_narrator_warnings,
 )
 from .tasks import enqueue_fetch_series_books, enqueue_test_job, enqueue_delete_series, enqueue_refresh_probe, worker
 from lib.audible_api_search import search_audible, get_product_by_asin, set_rate, DEFAULT_RESPONSE_GROUPS
@@ -99,8 +100,18 @@ class SeriesBookVisibilityRequest(BaseModel):
     hidden: bool
 
 
+class SeriesBookIgnoreNarratorRequest(BaseModel):
+    book_asin: str | None = None
+    title: str | None = None
+    ignore_narrator_warning: bool
+
+
 class SeriesTitleUpdateRequest(BaseModel):
     title: str
+
+
+class SeriesIgnoreSeriesRequest(BaseModel):
+    ignore: bool
 
 
 class DeveloperSeriesBookActionRequest(BaseModel):
@@ -644,6 +655,74 @@ async def api_series_book_visibility(asin: str, payload: SeriesBookVisibilityReq
     return {"matched": matched, "hidden": payload.hidden}
 
 
+@api_router.post("/series/{asin}/ignore-narrator-series")
+async def api_series_ignore_narrator_series(asin: str, payload: SeriesIgnoreSeriesRequest, user=Depends(get_current_user)):
+    """Toggle series-level ignore for narrator changes. When enabled, existing books are marked ignored and narrator_warnings cleared; when disabled, series-set ignores are cleared and warnings recomputed."""
+    _require_admin(user)
+    series_col = get_series_collection()
+    doc = series_col.find_one({"_id": asin})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Series not found")
+    books = doc.get("books", []) if isinstance(doc.get("books"), list) else []
+    if payload.ignore:
+        # Set series-level flag and mark existing books as ignored (remember which were set by series toggle)
+        for b in books:
+            if not isinstance(b, dict):
+                continue
+            b["ignore_narrator_warning"] = True
+            b["ignore_narrator_warning_set_by_series"] = True
+        series_col.update_one({"_id": asin}, {"$set": {"ignore_narrator_warnings": True, "books": books, "narrator_warnings": []}})
+        return {"asin": asin, "ignore_narrator_warnings": True}
+    else:
+        # Clear series-level flag and revert book-level ignores that were set by the series toggle
+        for b in books:
+            if not isinstance(b, dict):
+                continue
+            if b.get("ignore_narrator_warning_set_by_series"):
+                b["ignore_narrator_warning"] = False
+                b.pop("ignore_narrator_warning_set_by_series", None)
+        narrator_warnings = compute_narrator_warnings(books, asin)
+        series_col.update_one({"_id": asin}, {"$set": {"ignore_narrator_warnings": False, "books": books, "narrator_warnings": narrator_warnings}})
+        return {"asin": asin, "ignore_narrator_warnings": False, "narrator_warnings": narrator_warnings}
+
+@api_router.post("/series/{asin}/books/ignore-narrator")
+async def api_series_book_ignore_narrator(asin: str, payload: SeriesBookIgnoreNarratorRequest, user=Depends(get_current_user)):
+    _require_admin(user)
+    if not payload.book_asin and not payload.title:
+        raise HTTPException(status_code=400, detail="Book identifier required")
+    series_col = get_series_collection()
+    doc = series_col.find_one({"_id": asin})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Series not found")
+    books = doc.get("books", []) if isinstance(doc.get("books"), list) else []
+    matched = False
+    updated = False
+    for book in books:
+        if not isinstance(book, dict):
+            continue
+        match = False
+        if payload.book_asin and book.get("asin") == payload.book_asin:
+            match = True
+        elif not payload.book_asin and payload.title and isinstance(book.get("title"), str) and book.get("title") == payload.title:
+            match = True
+        if not match:
+            continue
+        matched = True
+        desired_ignore = bool(payload.ignore_narrator_warning)
+        if book.get("ignore_narrator_warning") == desired_ignore:
+            continue
+        # Update the book's ignore flag and clear any series-set marker if a user manually changes it
+        book["ignore_narrator_warning"] = desired_ignore
+        if not desired_ignore and book.get("ignore_narrator_warning_set_by_series"):
+            book.pop("ignore_narrator_warning_set_by_series", None)
+        updated = True
+    if updated:
+        narrator_warnings = compute_narrator_warnings(books, asin)
+        series_col.update_one({"_id": asin}, {"$set": {"books": books, "narrator_warnings": narrator_warnings}})
+        return {"matched": matched, "ignore_narrator_warning": payload.ignore_narrator_warning, "narrator_warnings": narrator_warnings}
+    return {"matched": matched, "ignore_narrator_warning": payload.ignore_narrator_warning}
+
+
 def _clear_release_notification_history(series_asin: str, book_asin: str | None):
     if not book_asin:
         return
@@ -989,6 +1068,7 @@ class PasswordChangeRequest(BaseModel):
 
 class ProfileUpdateRequest(BaseModel):
     date_format: str
+    show_narrator_warnings: bool = True
 
 
 class ApiKeyCreateRequest(BaseModel):
@@ -1180,6 +1260,8 @@ async def api_list_series(
         entry["book_count"] = doc.get("book_count_calc") if doc.get("book_count_calc") is not None else visible_book_count(doc.get("books"))
         entry["user_count"] = doc.get("user_count", 0)
         entry["books"] = doc.get("books", []) if isinstance(doc.get("books", []), list) else []
+        entry["ignore_narrator_warnings"] = bool(doc.get("ignore_narrator_warnings", False))
+        entry["narrator_warnings"] = doc.get("narrator_warnings", []) if isinstance(doc.get("narrator_warnings", []), list) else []
         entry.pop("book_count_calc", None)
         series.append(entry)
     return {
@@ -1477,6 +1559,7 @@ async def api_profile(user=Depends(get_current_user)):
         "library_count": lib_count,
         "date_format": user.get("date_format", "iso"),
         "frontpage_slug": user.get("frontpage_slug") or user.get("username"),
+        "show_narrator_warnings": user.get("show_narrator_warnings", True),
     }
 
 
@@ -1499,8 +1582,8 @@ async def api_update_profile_settings(payload: ProfileUpdateRequest, user=Depend
     if payload.date_format not in ("iso", "de", "us"):
         raise HTTPException(status_code=400, detail="Invalid date format")
     col = get_users_collection()
-    col.update_one({"username": user["username"]}, {"$set": {"date_format": payload.date_format}})
-    return {"status": "ok", "date_format": payload.date_format}
+    col.update_one({"_id": user["_id"]}, {"$set": {"date_format": payload.date_format, "show_narrator_warnings": payload.show_narrator_warnings}})
+    return {"status": "ok", "date_format": payload.date_format, "show_narrator_warnings": payload.show_narrator_warnings}
 
 
 @api_router.post("/profile/frontpage")

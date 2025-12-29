@@ -451,6 +451,22 @@ async function loadSeries() {
       titleEl.textContent = b.title || 'Unknown';
       const strong = document.createElement('strong');
       strong.appendChild(titleEl);
+
+      // Show narrator warning icon if this book's title is listed in series.narrator_warnings
+      try {
+        if (series.narrator_warnings && Array.isArray(series.narrator_warnings) && b.title && series.narrator_warnings.includes(b.title)) {
+          const warn = document.createElement('i');
+          warn.className = 'bi bi-exclamation-triangle text-warning ms-1';
+          warn.setAttribute('data-bs-toggle', 'tooltip');
+          warn.setAttribute('data-bs-placement', 'top');
+          warn.setAttribute('data-bs-title', 'Warning: This book has a different narrator than the first book in the series.');
+          strong.appendChild(warn);
+          new bootstrap.Tooltip(warn);
+        }
+      } catch (e) {
+        // ignore any errors here
+      }
+
       titleDiv.appendChild(strong);
       li.appendChild(titleDiv);
       
@@ -493,6 +509,13 @@ async function loadSeries() {
       hiddenBadge.style.display = hidden ? '' : 'none';
       controls.appendChild(hiddenBadge);
       
+      const ignored = b.ignore_narrator_warning || false;
+      const ignoredBadge = document.createElement('span');
+      ignoredBadge.className = 'badge bg-info text-dark';
+      ignoredBadge.textContent = 'Narrator ignored';
+      ignoredBadge.style.display = ignored ? '' : 'none';
+      controls.appendChild(ignoredBadge);
+      
       // Only show visibility toggle button for admin users
       if (isAdminUser) {
         const toggleBtn = document.createElement('button');
@@ -513,6 +536,63 @@ async function loadSeries() {
           }
         };
         controls.appendChild(toggleBtn);
+        
+        // Only show per-book ignore button when the series is not globally ignored
+        if (!series.ignore_narrator_warnings && ((series.narrator_warnings && series.narrator_warnings.includes(b.title)) || ignored)) {
+          const ignoreBtn = document.createElement('button');
+          ignoreBtn.className = 'btn btn-sm btn-outline-warning';
+          ignoreBtn.textContent = ignored ? 'Unignore narrator change' : 'Ignore narrator change';
+          ignoreBtn.onclick = async () => {
+            ignoreBtn.disabled = true;
+            try {
+              // read live state from book object instead of captured 'ignored'
+              const currentIgnored = Boolean(b.ignore_narrator_warning);
+              const newIgnored = !currentIgnored;
+              const resp = await updateSeriesBookIgnoreNarrator(series.asin, b, newIgnored);
+
+              // Update local book state and UI
+              b.ignore_narrator_warning = newIgnored;
+              ignoredBadge.style.display = newIgnored ? '' : 'none';
+              ignoreBtn.textContent = newIgnored ? 'Unignore narrator change' : 'Ignore narrator change';
+
+              // Update series-level warnings from response (server returns updated list)
+              if (resp && Array.isArray(resp.narrator_warnings)) {
+                series.narrator_warnings = resp.narrator_warnings;
+              }
+
+              // Update the warning icon if present (show only when not ignored and the title remains in warnings)
+              const titleEl = li.querySelector('strong');
+              if (titleEl) {
+                const existingWarn = titleEl.querySelector('.bi-exclamation-triangle');
+                const shouldShowWarn = !newIgnored && series.narrator_warnings && series.narrator_warnings.includes(b.title);
+                if (existingWarn) {
+                  existingWarn.style.display = shouldShowWarn ? '' : 'none';
+                } else if (shouldShowWarn) {
+                  // create one if needed
+                  const warn = document.createElement('i');
+                  warn.className = 'bi bi-exclamation-triangle text-warning ms-1';
+                  warn.setAttribute('data-bs-toggle', 'tooltip');
+                  warn.setAttribute('data-bs-placement', 'top');
+                  warn.setAttribute('data-bs-html', 'true');
+                  warn.setAttribute('data-bs-title', 'Warning: This book has a different narrator than the first book in the series.');
+                  titleEl.appendChild(warn);
+                  try { new bootstrap.Tooltip(warn); } catch (e) {}
+                }
+              }
+
+              // If we've unignored and the book is no longer in series warnings, remove the button
+              if (!newIgnored && (!series.narrator_warnings || !series.narrator_warnings.includes(b.title))) {
+                ignoreBtn.remove();
+              }
+
+            } catch (err) {
+              console.error(err);
+            } finally {
+              ignoreBtn.disabled = false;
+            }
+          };
+          controls.appendChild(ignoreBtn);
+        }
       }
       
       li.appendChild(controls);
@@ -684,6 +764,30 @@ async function updateSeriesBookVisibility(seriesAsin, book, hidden) {
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(text || 'Failed to update book visibility');
+  }
+  return resp.json();
+}
+
+async function updateSeriesBookIgnoreNarrator(seriesAsin, book, ignore) {
+  if (!seriesAsin) {
+    throw new Error('Series ASIN missing');
+  }
+  const payload = { ignore_narrator_warning: Boolean(ignore) };
+  if (book.asin) {
+    payload.book_asin = book.asin;
+  } else if (book.title) {
+    payload.title = book.title;
+  } else {
+    throw new Error('Book identifier missing');
+  }
+  const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(seriesAsin)}/books/ignore-narrator`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(text || 'Failed to update ignore narrator');
   }
   return resp.json();
 }
