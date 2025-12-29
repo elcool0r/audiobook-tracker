@@ -182,11 +182,12 @@
       let moved = false;
       const DRAG_THRESHOLD = 6; // pixels before we treat it as a drag
 
-      // Improve cursor & touch behavior
+      // Improve cursor behavior for desktop. Leave touch to native scrolling on mobile.
       container.style.cursor = 'grab';
-      container.style.touchAction = 'pan-y';
 
       container.addEventListener('pointerdown', (e) => {
+        // Only handle mouse/pen drags; let touch pointers use native scrolling
+        if (e.pointerType === 'touch') return;
         isDown = true;
         moved = false;
         startX = e.clientX;

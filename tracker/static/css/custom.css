@@ -202,6 +202,27 @@ html[data-bs-theme="dark"],
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	position: relative; /* so the narrator warning icon can be absolutely positioned and remain visible */
+	padding-right: 2rem; /* reserve space for the warning icon */
+}
+
+/* Keep the link truncation working but leave space for the icon */
+.all-series-table td.series-col .series-link {
+	display: inline-block;
+	max-width: calc(100% - 2rem);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Position the narrator-warning icon so it stays visible even when the title is truncated */
+.all-series-table td.series-col .bi-exclamation-triangle {
+	position: absolute;
+	right: 0.6rem;
+	top: 50%;
+	transform: translateY(-50%);
+	font-size: 0.95rem;
+	z-index: 2;
 }
 
 /* Upcoming column: next release */
