@@ -323,3 +323,33 @@ html[data-bs-theme="dark"],
 [data-bs-target="#statisticsCollapse"].collapsed .collapse-icon {
 	transform: rotate(-90deg);
 }
+
+/* Mobile table adjustments */
+@media (max-width: 767px) {
+  .all-series-table .series-col {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    word-wrap: break-word;
+    hyphens: auto;
+    max-width: 35% !important;
+  }
+  .all-series-table .series-link {
+    display: inline !important;
+    font-size: 0.8rem !important;
+  }
+  .all-series-table-wrapper {
+    overflow-x: visible !important;
+  }
+  .all-series-table {
+    width: 100% !important;
+    min-width: auto !important;
+    font-size: 0.8rem !important;
+  }
+  .all-series-table td, .all-series-table th {
+    padding: 0.2rem 0.3rem !important;
+  }
+  .all-series-table .books-col, .all-series-table .duration-col {
+    min-width: 40px !important;
+  }
+}
