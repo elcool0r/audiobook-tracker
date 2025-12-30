@@ -176,17 +176,15 @@
     });
   });
 
-  // Drag-to-scroll carousel for Upcoming / Latest releases (desktop mouse drag & pull)
+  // Drag-to-scroll carousel for Upcoming / Latest releases (custom mouse drag, native touch)
   document.addEventListener('DOMContentLoaded', () => {
     const containers = document.querySelectorAll('.upcoming-scroll, .latest-scroll');
     containers.forEach(container => {
       let isDown = false;
       let startX = 0;
       let scrollLeftStart = 0;
-      let moved = false;
-      const DRAG_THRESHOLD = 6; // pixels before we treat it as a drag
 
-      // Improve cursor behavior for desktop. Leave touch to native scrolling on mobile.
+      // Set cursor for better UX
       container.style.cursor = 'grab';
 
       container.addEventListener('pointerdown', (e) => {
@@ -195,18 +193,17 @@
         // Don't start drag if clicking on links or buttons
         if (e.target && e.target.closest && e.target.closest('a[href], button, input[type="button"], .btn')) return;
         isDown = true;
-        moved = false;
         startX = e.clientX;
         scrollLeftStart = container.scrollLeft;
         try { container.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
         container.classList.add('dragging');
         container.style.scrollBehavior = 'auto';
+        container.style.cursor = 'grabbing';
       });
 
       container.addEventListener('pointermove', (e) => {
         if (!isDown) return;
         const dx = e.clientX - startX;
-        if (Math.abs(dx) > DRAG_THRESHOLD) moved = true;
         container.scrollLeft = scrollLeftStart - dx;
       });
 
@@ -216,39 +213,15 @@
         try { container.releasePointerCapture && container.releasePointerCapture(e && e.pointerId); } catch (err) { /* ignore */ }
         container.classList.remove('dragging');
         container.style.scrollBehavior = 'smooth';
-
-        if (!moved) return;
-
-        // Prevent an accidental click right after a drag, but allow clicks on links/buttons
-        const preventClick = (clickEvent) => {
-          try {
-            const target = clickEvent.target;
-            if (target && target.closest && target.closest('a[href], button, input[type="button"], .btn')) {
-              // Allow links and buttons to function immediately after dragging
-              return;
-            }
-          } catch (err) { /* ignore */ }
-          clickEvent.preventDefault();
-          clickEvent.stopPropagation();
-        };
-        container.addEventListener('click', preventClick, true);
-        // Remove the temporary click block shortly after so normal clicks work again
-        setTimeout(() => container.removeEventListener('click', preventClick, true), 50);
+        container.style.cursor = 'grab';
       };
 
       ['pointerup','pointercancel','pointerleave'].forEach(evt => container.addEventListener(evt, finishDrag));
 
-      // Visual cursor changes while dragging
-      container.addEventListener('pointerdown', () => container.style.cursor = 'grabbing');
-      ['pointerup','pointercancel','pointerleave'].forEach(evt => container.addEventListener(evt, () => container.style.cursor = 'grab'));
-    });
-
-    // Prevent native drag-and-drop of images inside our scroll areas so pointer drag works anywhere on the card
-    document.addEventListener('dragstart', (e) => {
-      if (!e.target) return;
-      if (e.target.closest('.upcoming-scroll') || e.target.closest('.latest-scroll')) {
+      // Prevent native drag-and-drop of images inside our scroll areas
+      container.addEventListener('dragstart', (e) => {
         e.preventDefault();
-      }
+      });
     });
   });
   </script>
