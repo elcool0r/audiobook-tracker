@@ -87,7 +87,6 @@
             <thead>
               <tr>
                 <th scope="col" style="width:1%; white-space:nowrap;">Cover</th>
-                <th scope="col" style="width:1%; white-space:nowrap;"></th>
                 <th scope="col" data-sort-key="series" class="sortable-col" style="width:auto; white-space:nowrap;">Series</th>
                 <th scope="col" class="d-none d-md-table-cell narrators-head" style="min-width: 280px;">Narrators</th>
                 <th scope="col" data-sort-key="books" class="sortable-col text-end" style="min-width: 50px;">Books</th>
@@ -104,10 +103,9 @@
                   <img src="{{ s.cover }}" alt="Cover" style="height:40px;width:auto;border:none;outline:none;" data-bs-toggle="tooltip" data-bs-placement="right" data-bs-html="true" data-bs-custom-class="cover-tooltip" title='<img src="{{ s.cover }}" style="width:180px;height:auto;" />' />
                   {% endif %}
                 </td>
-                <td>
-                  {% if s.narrator_warnings and show_narrator_warnings %}<i class="bi bi-exclamation-triangle text-warning" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" data-bs-title="<strong>{{ s.narrator_warnings|length }} {{ 'Book' if s.narrator_warnings|length == 1 else 'Books' }} with {{ 'a different narrator' if s.narrator_warnings|length == 1 else 'different narrators' }}:</strong><br><ul class='mb-0'><li>{{ s.narrator_warnings|join('</li><li>') }}</li></ul>"|safe></i>{% endif %}
-                </td>
+
                   <td class="series-col" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  {% if s.narrator_warnings and show_narrator_warnings %}<i class="bi bi-exclamation-triangle text-warning me-1" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" data-bs-title="<strong>{{ s.narrator_warnings|length }} {{ 'Book' if s.narrator_warnings|length == 1 else 'Books' }} with {{ 'a different narrator' if s.narrator_warnings|length == 1 else 'different narrators' }}:</strong><br><ul class='mb-0'><li>{{ s.narrator_warnings|join('</li><li>') }}</li></ul>"|safe></i>{% endif %}
                   {% if s.url %}
                   <a href="{{ s.url }}" class="series-link d-inline-block text-decoration-none" title="{{ s.title }}">{{ s.title }}</a>
                   {% else %}
