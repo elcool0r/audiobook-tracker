@@ -60,6 +60,8 @@ def _series_payload(doc: Dict[str, Any]) -> Dict[str, Any]:
         "next_refresh_at": doc.get("next_refresh_at"),
         "user_count": doc.get("user_count", 0),
         "original_title": doc.get("original_title"),
+        "narrator_warnings": doc.get("narrator_warnings", []),
+        "ignore_narrator_warnings": bool(doc.get("ignore_narrator_warnings", False)),
     }
 
 
@@ -110,6 +112,73 @@ def visible_books(books: List[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
 
 def visible_book_count(books: List[Dict[str, Any]] | None) -> int:
     return len(visible_books(books))
+
+
+def _get_primary_narrator(narrators: Any) -> str | None:
+    if isinstance(narrators, list):
+        if not narrators:
+            return None
+        first = narrators[0]
+        if isinstance(first, dict):
+            name = first.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+            return None
+        if isinstance(first, str):
+            candidate = first.strip()
+            return candidate if candidate else None
+        return None
+    if isinstance(narrators, str):
+        parts = [part.strip() for part in narrators.split(",") if part.strip()]
+        return parts[0] if parts else None
+    return None
+
+
+def _book_sequence(book: Dict[str, Any], series_asin: str | None) -> int:
+    if not isinstance(book, dict):
+        return 999
+    for entry in book.get("series", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("asin") == series_asin:
+            seq = entry.get("sequence")
+            try:
+                return int(seq)
+            except Exception:
+                return 999
+    return 999
+
+
+def compute_narrator_warnings(books: List[Dict[str, Any]] | None, series_asin: str | None) -> List[str]:
+    if not isinstance(books, list) or not books:
+        return []
+    valid_books = [book for book in books if isinstance(book, dict)]
+    if not valid_books:
+        return []
+
+    def _release_dt(book):
+        rd = book.get("release_date")
+        if isinstance(rd, str) and rd.strip():
+            try:
+                return datetime.fromisoformat(rd.split("T")[0])
+            except Exception:
+                return None
+        return None
+
+    # Sort primarily by declared sequence (if present), falling back to release date so the first book is the earliest by sequence/date
+    sorted_books = sorted(valid_books, key=lambda book: (_book_sequence(book, series_asin), _release_dt(book) or datetime.max))
+    first_book = sorted_books[0]
+    primary_narrator = _get_primary_narrator(first_book.get("narrators"))
+    if not primary_narrator:
+        return []
+    warnings: List[str] = []
+    for book in sorted_books[1:]:
+        if book.get("ignore_narrator_warning"):
+            continue
+        book_narrator = _get_primary_narrator(book.get("narrators"))
+        if book_narrator != primary_narrator:
+            warnings.append(book.get("title", "Unknown"))
+    return warnings
 
 
 def ensure_series_document(asin: str, title: Optional[str], url: Optional[str]) -> tuple[Dict[str, Any], bool]:
@@ -205,6 +274,11 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
         if key and key not in existing_map:
             existing_map[key] = book
 
+    # Detect a series-level ignore flag so new books inherit ignore behavior
+    series_col = get_series_collection()
+    series_doc = series_col.find_one({"_id": asin}, {"ignore_narrator_warnings": 1}) or {}
+    series_ignore = bool(series_doc.get("ignore_narrator_warnings", False))
+
     processed_books: List[Dict[str, Any]] = []
     for book in books:
         if not isinstance(book, dict):
@@ -217,6 +291,19 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
         else:
             book_hidden = bool(existing_hidden)
         book["hidden"] = book_hidden
+        # Preserve any existing ignore_narrator_warning flag unless explicitly provided
+        existing_ignore = existing_map.get(key, {}).get("ignore_narrator_warning") if key else None
+        incoming_ignore = book.get("ignore_narrator_warning")
+        if isinstance(incoming_ignore, bool):
+            book_ignore = incoming_ignore
+        else:
+            book_ignore = bool(existing_ignore)
+        # If series-level ignore is enabled, ensure the book is ignored and mark why
+        if series_ignore:
+            book_ignore = True
+            # mark that this ignore was set due to series-level toggle so it can be reverted later
+            book["ignore_narrator_warning_set_by_series"] = True
+        book["ignore_narrator_warning"] = book_ignore
         processed_books.append(book)
 
     cover_image = None
@@ -227,6 +314,17 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
         if img:
             cover_image = img
             break
+
+    # Sort processed books so UI and computations have deterministic ordering: by sequence then by release date (oldest first)
+    def _parse_date_str(ds):
+        if isinstance(ds, str) and ds.strip():
+            try:
+                return datetime.fromisoformat(ds.split("T")[0])
+            except Exception:
+                return None
+        return None
+
+    processed_books.sort(key=lambda b: (_book_sequence(b, asin), _parse_date_str(b.get("release_date")) or datetime.max))
 
     # Only update books/fetched_at; don't create new docs (series doc should exist from ensure_series_document)
     result = series_col.update_one(
@@ -538,6 +636,7 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
     books: List[Dict[str, Any]] = []
     for entry in child_entries:
         child_asin = entry.get("asin")
+        rel = entry.get("rel", {}) or {}
         if not child_asin:
             continue
         child_obj = asyncio.run(_load_product(child_asin))
@@ -549,6 +648,16 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
         book = _book_summary(child_obj)
         if not book.get("asin"):
             book["asin"] = child_asin
+        # Attach series relationship info so sequence can be detected later
+        try:
+            seq = rel.get("sequence") if isinstance(rel, dict) else None
+            if not seq:
+                seq = rel.get("sort") if isinstance(rel, dict) else None
+        except Exception:
+            seq = None
+        # Use parent_asin (determined earlier) as the series ASIN for relationship entries
+        primary_series_asin = parent_asin or series_asin
+        book["series"] = [{"asin": primary_series_asin, "sequence": seq}] if primary_series_asin else []
         # fetch image data and store
         try:
             img_resp = requests.get(book["image"], timeout=10, proxies=proxies)

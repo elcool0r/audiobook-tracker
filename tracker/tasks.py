@@ -15,6 +15,7 @@ from .library import (
     fetch_series_books,
     is_book_hidden,
     set_series_books,
+    compute_narrator_warnings,
     set_series_raw,
     set_series_next_refresh,
     touch_series_fetched,
@@ -170,6 +171,8 @@ class TaskWorker:
             self._do_delete_series(job)
         elif job.get("type") == "test_job":
             self._do_test_job(job)
+        elif job.get("type") == "reschedule_all_series":
+            self._do_reschedule_all_series(job)
 
     def _do_fetch_series_books(self, job: Job):
         job_id = job.get("job_id")
@@ -186,22 +189,28 @@ class TaskWorker:
                 logging.info(f"Starting job {job_id} for series {asin}")
             response_groups = job.get("response_groups") or settings.response_groups or DEFAULT_RESPONSE_GROUPS
             books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
-            set_series_books(asin, books)
-            touch_series_fetched(asin)
+            # Check for placeholder issue_date and warn but continue
+            if isinstance(parent_obj, dict) and parent_obj.get("issue_date") == "2200-01-01":
+                logging.warning(f"Series {asin} has placeholder issue_date (2200-01-01), proceeding with fetch")
+            target_asin = parent_asin or asin
+            processed_books = set_series_books(target_asin, books)
+            touch_series_fetched(target_asin)
+            narrator_warnings = compute_narrator_warnings(processed_books, target_asin)
+            get_series_collection().update_one({"_id": target_asin}, {"$set": {"narrator_warnings": narrator_warnings}})
             
             # Extract title and URL from parent object and update series document
             if isinstance(parent_obj, dict):
                 series_title = parent_obj.get("title") or parent_obj.get("publication_name") or parent_obj.get("product_title")
                 series_url = parent_obj.get("url")
                 if series_title or series_url:
-                    ensure_series_document(asin, series_title, series_url)
+                    ensure_series_document(target_asin, series_title, series_url)
             
             # Save raw parent series JSON if we fetched it
             if isinstance(parent_obj, dict):
-                # Store raw under both the requested asin and the parent asin (if different)
-                set_series_raw(asin, parent_obj)
+                # Store raw under the target asin (parent when available) and also under the requested asin if different
+                set_series_raw(target_asin, parent_obj)
                 if parent_asin and parent_asin != asin:
-                    set_series_raw(parent_asin, parent_obj)
+                    set_series_raw(asin, parent_obj)
             
             # Fallback: if we have no raw data and found children, try fetching parent ASIN directly
             # This handles cases where _fetch_series_books_internal succeeded in finding books but didn't return parent_obj
@@ -254,6 +263,21 @@ class TaskWorker:
         time.sleep(1)
         if job_id:
             self._finish_job(job_id, {"message": "ok"})
+
+    def _do_reschedule_all_series(self, job: Job):
+        """Worker handler that waits for an optional delay and runs reschedule_all_series."""
+        import time
+        job_id = job.get("job_id")
+        delay = int(job.get("delay_seconds", 60) or 60)
+        try:
+            if delay > 0:
+                time.sleep(delay)
+            result = reschedule_all_series()
+            if job_id:
+                self._finish_job(job_id, result)
+        except Exception as exc:
+            if job_id:
+                self._finish_job(job_id, {"error": str(exc)})
 
     def _do_delete_series(self, job: Job):
         job_id = job.get("job_id")
@@ -329,14 +353,25 @@ class TaskWorker:
                         set_series_raw(asin, parent_obj_full)
                         if parent_asin_full and parent_asin_full != asin:
                             set_series_raw(parent_asin_full, parent_obj_full)
-                    processed_books = set_series_books(asin, books)
+                    target_id = parent_id
+                    processed_books = set_series_books(target_id, books)
                     books_current = processed_books
+
+                    # Compute narrator warnings using the shared helper
+                    if books:
+                        narrator_warnings = compute_narrator_warnings(books_current, target_id)
+                        series_col.update_one({"_id": target_id}, {"$set": {"narrator_warnings": narrator_warnings}})
                 else:
                     # Update raw parent only if we fetched it, but skip expensive child fetch
                     if isinstance(parent_obj, dict):
                         set_series_raw(asin, parent_obj)
                         if parent_asin and parent_asin != asin:
                             set_series_raw(parent_asin, parent_obj)
+
+                narrator_warnings = compute_narrator_warnings(books_current, asin)
+                if settings and getattr(settings, "debug_logging", False):
+                    logging.info(f"Computed {len(narrator_warnings)} narrator warnings for {asin}")
+                series_col.update_one({"_id": asin}, {"$set": {"narrator_warnings": narrator_warnings}})
 
                 # Touch fetched timestamp
                 touch_series_fetched(asin)
@@ -992,9 +1027,14 @@ def _rebalance_auto_refresh(reference: datetime | None = None):
     if not docs:
         return
     total = len(docs)
-    interval = AUTO_REFRESH_CYCLE_SEC / total
+    # Use a safe fallback in case the module-level constant isn't available at runtime
+    cycle_sec = globals().get("AUTO_REFRESH_CYCLE_SEC", 24 * 60 * 60)
+    try:
+        interval = cycle_sec / total
+    except Exception:
+        interval = cycle_sec
     if interval <= 0:
-        interval = AUTO_REFRESH_CYCLE_SEC
+        interval = cycle_sec
     now = reference
     offset_acc = interval
     from datetime import timezone
@@ -1108,16 +1148,15 @@ def reschedule_all_series():
     if not all_series:
         return {"count": 0, "message": "No series to reschedule"}
     
-    # Calculate the interval in seconds
-    interval_minutes = settings.manual_refresh_interval_minutes
-    interval_sec = interval_minutes * 60
+    # Use the full 24-hour cycle for rescheduling
+    interval_sec = AUTO_REFRESH_CYCLE_SEC
     
-    # Distribute series evenly across the interval
+    # Distribute series evenly across 24 hours
     count = len(all_series)
     now = _now_dt()
     
     for i, series in enumerate(all_series):
-        # Calculate offset for this series
+        # Calculate offset for this series across the 24h window
         offset_sec = int((i / max(count, 1)) * interval_sec)
         next_refresh = now + _delta_sec(offset_sec)
         next_refresh_iso = next_refresh.isoformat() + "Z"
@@ -1128,4 +1167,35 @@ def reschedule_all_series():
             {"$set": {"next_refresh_at": next_refresh_iso}}
         )
     
-    return {"count": count, "message": f"Rescheduled {count} series over {interval_minutes} minutes"}
+    return {"count": count, "message": f"Rescheduled {count} series over 24 hours"}
+
+
+def refresh_all_series(source: str | None = "manual") -> dict:
+    """Enqueue a refresh probe for every series and return job ids."""
+    series_col = get_series_collection()
+    jobs = []
+    for doc in series_col.find({}):
+        asin = doc.get("_id")
+        if not asin:
+            continue
+        try:
+            jid = enqueue_refresh_probe(str(asin), response_groups=None, source=source)
+            jobs.append(jid)
+        except Exception:
+            # Continue on error for robustness
+            continue
+    return {"count": len(jobs), "job_ids": jobs}
+
+
+def enqueue_reschedule_all_series(username: str | None = None, delay_seconds: int = 60) -> str:
+    """Create a queued job that will run reschedule_all_series after a delay and return the job id."""
+    job_id = str(get_jobs_collection().insert_one({
+        "type": "reschedule_all_series",
+        "username": username,
+        "status": "queued",
+        "delay_seconds": int(delay_seconds),
+        "created_at": _now_iso(),
+    }).inserted_id)
+    # Enqueue the worker job
+    worker.enqueue({"type": "reschedule_all_series", "job_id": job_id, "delay_seconds": int(delay_seconds)})
+    return job_id

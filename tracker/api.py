@@ -25,6 +25,7 @@ from .library import (
     _build_proxies,
     visible_books,
     visible_book_count,
+    compute_narrator_warnings,
 )
 from .tasks import enqueue_fetch_series_books, enqueue_test_job, enqueue_delete_series, enqueue_refresh_probe, worker
 from lib.audible_api_search import search_audible, get_product_by_asin, set_rate, DEFAULT_RESPONSE_GROUPS
@@ -89,6 +90,7 @@ class SettingsSaveRequest(BaseModel):
     proxy_username: str | None = None
     proxy_password: str | None = None
     default_frontpage_slug: str | None = None
+    users_can_edit_frontpage_slug: bool | None = None
     debug_logging: bool | None = None
     developer_mode: bool | None = None
 
@@ -99,8 +101,18 @@ class SeriesBookVisibilityRequest(BaseModel):
     hidden: bool
 
 
+class SeriesBookIgnoreNarratorRequest(BaseModel):
+    book_asin: str | None = None
+    title: str | None = None
+    ignore_narrator_warning: bool
+
+
 class SeriesTitleUpdateRequest(BaseModel):
     title: str
+
+
+class SeriesIgnoreSeriesRequest(BaseModel):
+    ignore: bool
 
 
 class DeveloperSeriesBookActionRequest(BaseModel):
@@ -190,6 +202,7 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
         allow_non_admin_series_search=payload.allow_non_admin_series_search if payload.allow_non_admin_series_search is not None else current.allow_non_admin_series_search,
         skip_known_series_search=payload.skip_known_series_search if payload.skip_known_series_search is not None else current.skip_known_series_search,
         default_frontpage_slug=slug,
+        users_can_edit_frontpage_slug=payload.users_can_edit_frontpage_slug if payload.users_can_edit_frontpage_slug is not None else current.users_can_edit_frontpage_slug,
         debug_logging=payload.debug_logging if payload.debug_logging is not None else current.debug_logging,
         developer_mode=payload.developer_mode if payload.developer_mode is not None else current.developer_mode,
     )
@@ -467,10 +480,10 @@ async def api_add_library(payload: LibraryAddRequest, user=Depends(get_current_u
 
     item = LibraryItem(title=title, asin=payload.asin, url=_clean_url(payload.url))
     skip_fetch = bool(payload.skip_fetch)
-    added = await add_to_library(user["username"], item, skip_fetch=skip_fetch)
+    added = await add_to_library(user["username"], item, skip_fetch=True)  # Always skip fetch for speed
 
     job_id = None
-    if added.asin and not skip_fetch:
+    if added.asin:
         try:
             job_id = enqueue_fetch_series_books(user["username"], added.asin)
         except Exception:
@@ -519,12 +532,13 @@ async def api_public_series_info(asin: str):
     response_groups = settings.response_groups or DEFAULT_RESPONSE_GROUPS
     books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
     if books:
-        set_series_books(asin, books)
+        target_asin = parent_asin or asin
+        set_series_books(target_asin, books)
         if isinstance(parent_obj, dict):
-            set_series_raw(asin, parent_obj)
+            set_series_raw(target_asin, parent_obj)
             if parent_asin and parent_asin != asin:
                 set_series_raw(parent_asin, parent_obj)
-        updated = get_series_document(asin)
+        updated = get_series_document(target_asin)
         if updated:
             return updated
     if series:
@@ -542,9 +556,10 @@ async def api_public_series_books(asin: str):
     response_groups = settings.response_groups or DEFAULT_RESPONSE_GROUPS
     books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
     if books:
-        set_series_books(asin, books)
+        target_asin = parent_asin or asin
+        set_series_books(target_asin, books)
         if isinstance(parent_obj, dict):
-            set_series_raw(asin, parent_obj)
+            set_series_raw(target_asin, parent_obj)
             if parent_asin and parent_asin != asin:
                 set_series_raw(parent_asin, parent_obj)
     return books
@@ -556,10 +571,12 @@ async def api_series_books(asin: str, user=Depends(get_current_user)):
     response_groups = settings.response_groups or DEFAULT_RESPONSE_GROUPS
     books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
     if isinstance(parent_obj, dict):
-        set_series_raw(asin, parent_obj)
+        target_asin = parent_asin or asin
+        set_series_raw(target_asin, parent_obj)
         if parent_asin and parent_asin != asin:
             set_series_raw(parent_asin, parent_obj)
-    set_series_books(asin, books)
+    target_asin = parent_asin or asin
+    set_series_books(target_asin, books)
     return books
 
 
@@ -642,6 +659,74 @@ async def api_series_book_visibility(asin: str, payload: SeriesBookVisibilityReq
                 break
         series_col.update_one({"_id": asin}, {"$set": {"books": books, "cover_image": cover_image}})
     return {"matched": matched, "hidden": payload.hidden}
+
+
+@api_router.post("/series/{asin}/ignore-narrator-series")
+async def api_series_ignore_narrator_series(asin: str, payload: SeriesIgnoreSeriesRequest, user=Depends(get_current_user)):
+    """Toggle series-level ignore for narrator changes. When enabled, existing books are marked ignored and narrator_warnings cleared; when disabled, series-set ignores are cleared and warnings recomputed."""
+    _require_admin(user)
+    series_col = get_series_collection()
+    doc = series_col.find_one({"_id": asin})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Series not found")
+    books = doc.get("books", []) if isinstance(doc.get("books"), list) else []
+    if payload.ignore:
+        # Set series-level flag and mark existing books as ignored (remember which were set by series toggle)
+        for b in books:
+            if not isinstance(b, dict):
+                continue
+            b["ignore_narrator_warning"] = True
+            b["ignore_narrator_warning_set_by_series"] = True
+        series_col.update_one({"_id": asin}, {"$set": {"ignore_narrator_warnings": True, "books": books, "narrator_warnings": []}})
+        return {"asin": asin, "ignore_narrator_warnings": True}
+    else:
+        # Clear series-level flag and revert book-level ignores that were set by the series toggle
+        for b in books:
+            if not isinstance(b, dict):
+                continue
+            if b.get("ignore_narrator_warning_set_by_series"):
+                b["ignore_narrator_warning"] = False
+                b.pop("ignore_narrator_warning_set_by_series", None)
+        narrator_warnings = compute_narrator_warnings(books, asin)
+        series_col.update_one({"_id": asin}, {"$set": {"ignore_narrator_warnings": False, "books": books, "narrator_warnings": narrator_warnings}})
+        return {"asin": asin, "ignore_narrator_warnings": False, "narrator_warnings": narrator_warnings}
+
+@api_router.post("/series/{asin}/books/ignore-narrator")
+async def api_series_book_ignore_narrator(asin: str, payload: SeriesBookIgnoreNarratorRequest, user=Depends(get_current_user)):
+    _require_admin(user)
+    if not payload.book_asin and not payload.title:
+        raise HTTPException(status_code=400, detail="Book identifier required")
+    series_col = get_series_collection()
+    doc = series_col.find_one({"_id": asin})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Series not found")
+    books = doc.get("books", []) if isinstance(doc.get("books"), list) else []
+    matched = False
+    updated = False
+    for book in books:
+        if not isinstance(book, dict):
+            continue
+        match = False
+        if payload.book_asin and book.get("asin") == payload.book_asin:
+            match = True
+        elif not payload.book_asin and payload.title and isinstance(book.get("title"), str) and book.get("title") == payload.title:
+            match = True
+        if not match:
+            continue
+        matched = True
+        desired_ignore = bool(payload.ignore_narrator_warning)
+        if book.get("ignore_narrator_warning") == desired_ignore:
+            continue
+        # Update the book's ignore flag and clear any series-set marker if a user manually changes it
+        book["ignore_narrator_warning"] = desired_ignore
+        if not desired_ignore and book.get("ignore_narrator_warning_set_by_series"):
+            book.pop("ignore_narrator_warning_set_by_series", None)
+        updated = True
+    if updated:
+        narrator_warnings = compute_narrator_warnings(books, asin)
+        series_col.update_one({"_id": asin}, {"$set": {"books": books, "narrator_warnings": narrator_warnings}})
+        return {"matched": matched, "ignore_narrator_warning": payload.ignore_narrator_warning, "narrator_warnings": narrator_warnings}
+    return {"matched": matched, "ignore_narrator_warning": payload.ignore_narrator_warning}
 
 
 def _clear_release_notification_history(series_asin: str, book_asin: str | None):
@@ -989,6 +1074,8 @@ class PasswordChangeRequest(BaseModel):
 
 class ProfileUpdateRequest(BaseModel):
     date_format: str
+    show_narrator_warnings: bool = True
+    latest_count: int = 4  # how many latest releases to show (1-24)
 
 
 class ApiKeyCreateRequest(BaseModel):
@@ -1180,6 +1267,8 @@ async def api_list_series(
         entry["book_count"] = doc.get("book_count_calc") if doc.get("book_count_calc") is not None else visible_book_count(doc.get("books"))
         entry["user_count"] = doc.get("user_count", 0)
         entry["books"] = doc.get("books", []) if isinstance(doc.get("books", []), list) else []
+        entry["ignore_narrator_warnings"] = bool(doc.get("ignore_narrator_warnings", False))
+        entry["narrator_warnings"] = doc.get("narrator_warnings", []) if isinstance(doc.get("narrator_warnings", []), list) else []
         entry.pop("book_count_calc", None)
         series.append(entry)
     return {
@@ -1254,6 +1343,25 @@ async def api_reschedule_all_series(user=Depends(get_current_user)):
         "finished_at": now_iso,
     }).inserted_id)
     return {**result, "job_id": job_id}
+
+
+@api_router.post("/series/refresh-all")
+async def api_refresh_all_series(user=Depends(get_current_user)):
+    _require_admin(user)
+    from .tasks import refresh_all_series, enqueue_reschedule_all_series
+    refresh_result = refresh_all_series(source="manual")
+    # Enqueue a follow-up reschedule job to run after a short delay (so refresh probes can complete)
+    reschedule_job_id = enqueue_reschedule_all_series(user.get("username"), delay_seconds=60)
+    now_iso = _utcnow_iso()
+    job_id = str(get_jobs_collection().insert_one({
+        "type": "refresh_all_series",
+        "username": user.get("username"),
+        "status": "done",
+        "result": {"refresh": refresh_result, "reschedule_job_id": reschedule_job_id},
+        "created_at": now_iso,
+        "finished_at": now_iso,
+    }).inserted_id)
+    return {"refresh": refresh_result, "reschedule_job_id": reschedule_job_id, "job_id": job_id}
 
 
 @api_router.get("/database/stats")
@@ -1477,6 +1585,8 @@ async def api_profile(user=Depends(get_current_user)):
         "library_count": lib_count,
         "date_format": user.get("date_format", "iso"),
         "frontpage_slug": user.get("frontpage_slug") or user.get("username"),
+        "show_narrator_warnings": user.get("show_narrator_warnings", True),
+        "latest_count": int(user.get("latest_count") or 4),
     }
 
 
@@ -1498,13 +1608,23 @@ async def api_change_password(payload: PasswordChangeRequest, user=Depends(get_c
 async def api_update_profile_settings(payload: ProfileUpdateRequest, user=Depends(get_current_user)):
     if payload.date_format not in ("iso", "de", "us"):
         raise HTTPException(status_code=400, detail="Invalid date format")
+    # Validate latest_count
+    try:
+        latest_count = int(payload.latest_count)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid latest_count")
+    if latest_count < 1 or latest_count > 24:
+        raise HTTPException(status_code=400, detail="latest_count must be between 1 and 24")
     col = get_users_collection()
-    col.update_one({"username": user["username"]}, {"$set": {"date_format": payload.date_format}})
-    return {"status": "ok", "date_format": payload.date_format}
+    col.update_one({"_id": user["_id"]}, {"$set": {"date_format": payload.date_format, "show_narrator_warnings": payload.show_narrator_warnings, "latest_count": latest_count}})
+    return {"status": "ok", "date_format": payload.date_format, "show_narrator_warnings": payload.show_narrator_warnings, "latest_count": latest_count}
 
 
 @api_router.post("/profile/frontpage")
 async def api_update_frontpage(payload: FrontpageSlugRequest, user=Depends(get_current_user)):
+    settings = load_settings()
+    if not settings.users_can_edit_frontpage_slug:
+        raise HTTPException(status_code=403, detail="Frontpage slug changes are disabled")
     slug = (payload.slug or "").strip()
     if not slug:
         raise HTTPException(status_code=400, detail="Slug cannot be empty")

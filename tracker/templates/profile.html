@@ -40,6 +40,7 @@
             <option value="us">US (MM/DD/YYYY)</option>
           </select>
         </div>
+        {% if settings.users_can_edit_frontpage_slug %}
         <div class="mb-2">
           <label class="form-label">Frontpage slug</label>
           <div class="input-group input-group-sm">
@@ -47,9 +48,18 @@
             <input class="form-control" id="frontpageSlug" placeholder="your-name" />
           </div>
           <div class="form-text">Letters, numbers, hyphen, underscore. Must be unique. The frontpage is served at /home/&lt;slug&gt;.</div>
-          <div class="mt-2">
-            <a id="frontpageLink" class="btn btn-sm btn-outline-primary" href="#" target="_blank">Open frontpage</a>
+        </div>
+        {% endif %}
+        <div class="mb-2">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="showNarratorWarnings" checked>
+            <label class="form-check-label" for="showNarratorWarnings">Show narrator warnings</label>
           </div>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Latest releases to show</label>
+          <input class="form-control form-control-sm" type="number" id="latestCount" min="1" max="24" value="4" />
+          <div class="form-text">How many items appear in the "Latest Releases" carousel (1-24).</div>
         </div>
         <button class="btn btn-sm btn-primary" id="savePrefs">Save Preferences</button>
         <div class="alert alert-success mt-2" id="prefOk" style="display:none;">Preferences saved</div>
@@ -90,18 +100,18 @@ async function loadProfile() {
   const r = await fetch(apiPath('/api/profile'));
   if (!r.ok) return;
   const p = await r.json();
-  document.getElementById('p-username').textContent = p.username;
-  document.getElementById('p-role').textContent = p.role;
-  document.getElementById('p-libcount').textContent = p.library_count;
-  document.getElementById('dateFormat').value = p.date_format || 'iso';
-  document.getElementById('frontpageSlug').value = p.frontpage_slug || p.username;
+  const usernameEl = document.getElementById('p-username'); if (usernameEl) usernameEl.textContent = p.username;
+  const roleEl = document.getElementById('p-role'); if (roleEl) roleEl.textContent = p.role;
+  const libcountEl = document.getElementById('p-libcount'); if (libcountEl) libcountEl.textContent = p.library_count;
+  const dateFormatEl = document.getElementById('dateFormat'); if (dateFormatEl) dateFormatEl.value = p.date_format || 'iso';
+  const showWarningsEl = document.getElementById('showNarratorWarnings'); if (showWarningsEl) showWarningsEl.checked = p.show_narrator_warnings !== false;
+  const latestCountEl = document.getElementById('latestCount'); if (latestCountEl) latestCountEl.value = (p.latest_count || 4);
+  // frontpage link removed from profile (navbar provides it); only set input if present
   const fp = p.frontpage_slug || p.username;
-  const link = document.getElementById('frontpageLink');
-    if (link) {
-      const frontpageUrl = `/home/${fp}`;
-      link.href = frontpageUrl;
-      link.textContent = `Open frontpage (${frontpageUrl})`;
-    }
+  const frontpageEl = document.getElementById('frontpageSlug');
+  if (frontpageEl) {
+    frontpageEl.value = fp;
+  }
 }
 
 // --- API Keys handlers --- (DISABLED)
@@ -170,21 +180,33 @@ loadProfile();
 
 document.getElementById('savePrefs').addEventListener('click', async () => {
   const dateFormat = document.getElementById('dateFormat').value;
-  const frontpageSlug = document.getElementById('frontpageSlug').value.trim();
-  
-  const r1 = await fetch(apiPath('/api/profile/preferences'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date_format: dateFormat }) });
-  const r2 = await fetch(apiPath('/api/profile/frontpage'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug: frontpageSlug }) });
-  
+  const frontpageEl = document.getElementById('frontpageSlug');
+  const frontpageSlug = frontpageEl ? frontpageEl.value.trim() : null;
+
+  const prefsBody = {
+    date_format: dateFormat,
+    show_narrator_warnings: document.getElementById('showNarratorWarnings').checked,
+    latest_count: Number(document.getElementById('latestCount').value) || 4,
+  };
+
+  const r1 = await fetch(apiPath('/api/profile/preferences'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(prefsBody) });
+
+  // Only send frontpage update if the input exists (users may not be allowed to edit it)
+  let r2 = { ok: true };
+  if (frontpageEl) {
+    r2 = await fetch(apiPath('/api/profile/frontpage'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug: frontpageSlug }) });
+  }
+
   const ok = document.getElementById('prefOk');
   const err = document.getElementById('prefErr');
   ok.style.display = 'none'; err.style.display = 'none';
-  
+
   if (r1.ok && r2.ok) {
     ok.style.display = 'block';
     await loadProfile();
   } else {
     const d1 = await r1.json().catch(() => ({}));
-    const d2 = await r2.json().catch(() => ({}));
+    const d2 = r2.ok ? {} : await r2.json().catch(() => ({}));
     err.textContent = d1.detail || d2.detail || 'Error saving preferences';
     err.style.display = 'block';
   }

@@ -14,6 +14,7 @@
   const asin = "{{ asin }}";
   let books = [];
   let seriesName = '';
+  let seriesData = {};
   const fmt = new URLSearchParams(window.location.search).get('fmt') || 'iso';
 
   function pad(n) { return n.toString().padStart(2, '0'); }
@@ -52,7 +53,18 @@
       }
       const body = document.createElement('div');
       body.className = 'card-body';
-      const h5 = document.createElement('h5'); h5.className = 'card-title text-truncate'; h5.textContent = b.title || ''; body.appendChild(h5);
+      const h5 = document.createElement('h5'); h5.className = 'card-title text-truncate';
+      h5.appendChild(document.createTextNode(b.title || ''));
+      if (seriesData.narrator_warnings && seriesData.narrator_warnings.includes(b.title)) {
+        const icon = document.createElement('i');
+        icon.className = 'bi bi-exclamation-triangle text-warning ms-1';
+        icon.setAttribute('data-bs-toggle', 'tooltip');
+        icon.setAttribute('data-bs-placement', 'top');
+        icon.setAttribute('data-bs-title', 'Warning: This book has a different narrator than the first book in the series.');
+        h5.appendChild(icon);
+        new bootstrap.Tooltip(icon);
+      }
+      body.appendChild(h5);
       const p1 = document.createElement('p'); p1.className = 'card-text small'; p1.innerHTML = `<strong>Narrator:</strong> ${b.narrators || ''}`; body.appendChild(p1);
       const p2 = document.createElement('p'); p2.className = 'card-text small'; p2.innerHTML = `<strong>Duration:</strong> ${fmtDurationMins(b.runtime)}`; body.appendChild(p2);
       const p3 = document.createElement('p'); p3.className = 'card-text small'; p3.innerHTML = `<strong>Release Date:</strong> ${fmtDateShort(b.release_date)}`; body.appendChild(p3);
@@ -65,9 +77,10 @@
 
   async function loadSeries() {
     try {
-      const r = await fetch(`/api/public/series/${encodeURIComponent(asin)}`);
+      const r = await fetch(apiPath(`/api/public/series/${encodeURIComponent(asin)}`));
       if (!r.ok) return;
       const data = await r.json();
+      seriesData = data;
       seriesName = data.title || seriesName;
       document.getElementById('seriesTitle').textContent = seriesName || 'Series';
       books = Array.isArray(data.books) ? data.books : [];

@@ -39,7 +39,7 @@ def run_tests():
     # Add test directories
     pytest_args.extend(test_dirs)
 
-    print("🚀 Running Audiobook Tracker Tests")
+    print("Running Audiobook Tracker Tests")
     print("=" * 50)
 
     try:

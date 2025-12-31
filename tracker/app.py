@@ -126,6 +126,18 @@ def create_app() -> FastAPI:
         username = user_doc.get("username")
         date_format = user_doc.get("date_format", "iso")
         library = get_user_library(username)
+        # How many latest releases to show (user preference).
+        try:
+            num_latest = int(user_doc.get('latest_count') or 4)
+        except Exception:
+            num_latest = 4
+        num_latest = max(1, min(24, num_latest))
+        # How many latest releases to show (user preference).
+        try:
+            num_latest = int(user_doc.get('latest_count') or 4)
+        except Exception:
+            num_latest = 4
+        num_latest = max(1, min(24, num_latest))
 
         from datetime import datetime, timezone
 
@@ -272,8 +284,34 @@ def create_app() -> FastAPI:
 
         upcoming_cards.sort(key=lambda x: x["release_dt"])
         latest_cards.sort(key=lambda x: x["release_dt"], reverse=True)
-        latest_cards = latest_cards[:4]
+        latest_cards = latest_cards[:num_latest]
         series_rows.sort(key=lambda x: (x["title"] or ""))
+
+        series_asins = [row.get("asin") for row in series_rows if row.get("asin")]
+        narrator_warnings_map: dict[str, list] = {}
+        if series_asins:
+            try:
+                docs = get_series_collection().find({"_id": {"$in": series_asins}}, {"narrator_warnings": 1})
+                for doc in docs:
+                    if isinstance(doc, dict):
+                        asin_key = doc.get("_id")
+                        if asin_key:
+                            narrator_warnings_map[asin_key] = doc.get("narrator_warnings", []) or []
+            except Exception:
+                narrator_warnings_map = {}
+        for row in series_rows:
+            row["narrator_warnings"] = narrator_warnings_map.get(row.get("asin")) or []
+
+        # Attach per-card narrator warning flags for upcoming and latest lists
+        title_to_asin = {row.get("title"): row.get("asin") for row in series_rows if row.get("title")}
+        for card in upcoming_cards:
+            series_asin = card.get("series_asin") or title_to_asin.get(card.get("series"))
+            card["series_asin"] = series_asin
+            card["narrator_warning"] = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
+        for card in latest_cards:
+            series_asin = card.get("series_asin") or title_to_asin.get(card.get("series"))
+            card["series_asin"] = series_asin
+            card["narrator_warning"] = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
 
         stats = {
             "series_count": len(library),
@@ -299,6 +337,7 @@ def create_app() -> FastAPI:
                 "latest": latest_cards,
                 "series": series_rows,
                 "version": __version__,
+                "show_narrator_warnings": user_doc.get("show_narrator_warnings", True),
             },
         )
 
@@ -407,6 +446,12 @@ def create_app() -> FastAPI:
         username = user_doc.get("username")
         date_format = user_doc.get("date_format", "iso")
         library = get_user_library(username)
+        # How many latest releases to show (user preference).
+        try:
+            num_latest = int(user_doc.get('latest_count') or 4)
+        except Exception:
+            num_latest = 4
+        num_latest = max(1, min(24, num_latest))
 
         from datetime import datetime, timezone
 
@@ -553,8 +598,34 @@ def create_app() -> FastAPI:
 
         upcoming_cards.sort(key=lambda x: x["release_dt"])
         latest_cards.sort(key=lambda x: x["release_dt"], reverse=True)
-        latest_cards = latest_cards[:4]
+        latest_cards = latest_cards[:num_latest]
         series_rows.sort(key=lambda x: (x["title"] or ""))
+
+        # Load narrator warnings for series and attach per-card flags
+        series_asins = [row.get("asin") for row in series_rows if row.get("asin")]
+        narrator_warnings_map: dict[str, list] = {}
+        if series_asins:
+            try:
+                docs = get_series_collection().find({"_id": {"$in": series_asins}}, {"narrator_warnings": 1})
+                for doc in docs:
+                    if isinstance(doc, dict):
+                        asin_key = doc.get("_id")
+                        if asin_key:
+                            narrator_warnings_map[asin_key] = doc.get("narrator_warnings", []) or []
+            except Exception:
+                narrator_warnings_map = {}
+        for row in series_rows:
+            row["narrator_warnings"] = narrator_warnings_map.get(row.get("asin")) or []
+
+        title_to_asin = {row.get("title"): row.get("asin") for row in series_rows if row.get("title")}
+        for card in upcoming_cards:
+            series_asin = card.get("series_asin") or title_to_asin.get(card.get("series"))
+            card["series_asin"] = series_asin
+            card["narrator_warning"] = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
+        for card in latest_cards:
+            series_asin = card.get("series_asin") or title_to_asin.get(card.get("series"))
+            card["series_asin"] = series_asin
+            card["narrator_warning"] = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
 
         stats = {
             "series_count": len(library),
@@ -576,6 +647,7 @@ def create_app() -> FastAPI:
                 "upcoming": upcoming_cards,
                 "latest": latest_cards,
                 "series": series_rows,
+                "show_narrator_warnings": user_doc.get("show_narrator_warnings", True),
             },
         )
 
@@ -586,7 +658,7 @@ def create_app() -> FastAPI:
         # public view for a series by ASIN with public navbar
         from .db import get_series_collection
         series_col = get_series_collection()
-        series_doc = series_col.find_one({"asin": asin})
+        series_doc = series_col.find_one({"$or": [{"asin": asin}, {"_id": asin}]})
         if not series_doc:
             raise HTTPException(status_code=404, detail="Series not found")
         return templates.TemplateResponse(

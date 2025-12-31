@@ -13,10 +13,10 @@
           <div class="card h-100">
             <h6 class="text-center mb-1">{{ b.days_left }} days</h6>
             {% if b.image %}
-            <img src="{{ b.image }}" class="card-img-top" alt="Cover"/>
+            <img src="{{ b.image }}" class="card-img-top" alt="Cover" draggable="false" />
             {% endif %}
             <div class="card-body">
-              <h5 class="card-title">{{ b.title }}</h5>
+              <h5 class="card-title">{% if b.narrator_warning and show_narrator_warnings %}<i class="bi bi-exclamation-triangle text-warning me-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Different narrator than the first book in the series"></i>{% endif %}{{ b.title }}</h5>
               <div class="card-subtitle text-muted">{{ b.series }}</div>
             <div class="mt-2"><strong>Release:</strong> {{ b.release_str }}</div>
               {% if b.narrators %}
@@ -53,10 +53,10 @@
           <div class="card h-100">
             <h6 class="text-center mb-1">{% if b.days_ago == 0 %}today{% elif b.days_ago == 1 %}yesterday{% else %}{{ b.days_ago }} days ago{% endif %}</h6>
             {% if b.image %}
-            <img src="{{ b.image }}" class="card-img-top" alt="Cover"/>
+            <img src="{{ b.image }}" class="card-img-top" alt="Cover" draggable="false" />
             {% endif %}
             <div class="card-body">
-              <h5 class="card-title">{{ b.title }}</h5>
+              <h5 class="card-title">{% if b.narrator_warning and show_narrator_warnings %}<i class="bi bi-exclamation-triangle text-warning me-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Different narrator than the first book in the series"></i>{% endif %}{{ b.title }}</h5>
               <div class="card-subtitle text-muted">{{ b.series }}</div>
               <div class="card-subtitle text-muted">Released: {{ b.release_str }}</div>
               {% if b.runtime_str %}
@@ -103,7 +103,9 @@
                   <img src="{{ s.cover }}" alt="Cover" style="height:40px;width:auto;border:none;outline:none;" data-bs-toggle="tooltip" data-bs-placement="right" data-bs-html="true" data-bs-custom-class="cover-tooltip" title='<img src="{{ s.cover }}" style="width:180px;height:auto;" />' />
                   {% endif %}
                 </td>
+
                   <td class="series-col" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  {% if s.narrator_warnings and show_narrator_warnings %}<i class="bi bi-exclamation-triangle text-warning me-1" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" data-bs-title="<strong>{{ s.narrator_warnings|length }} {{ 'Book' if s.narrator_warnings|length == 1 else 'Books' }} with {{ 'a different narrator' if s.narrator_warnings|length == 1 else 'different narrators' }}:</strong><br><ul class='mb-0'><li>{{ s.narrator_warnings|join('</li><li>') }}</li></ul>"|safe></i>{% endif %}
                   {% if s.url %}
                   <a href="{{ s.url }}" class="series-link d-inline-block text-decoration-none" title="{{ s.title }}">{{ s.title }}</a>
                   {% else %}
@@ -168,6 +170,55 @@
         sortState = { key, dir };
         headers.forEach(h => h.removeAttribute('data-sort-dir'));
         th.setAttribute('data-sort-dir', dir === 1 ? 'asc' : 'desc');
+      });
+    });
+  });
+
+  // Drag-to-scroll carousel for Upcoming / Latest releases (custom mouse drag, native touch)
+  document.addEventListener('DOMContentLoaded', () => {
+    const containers = document.querySelectorAll('.upcoming-scroll, .latest-scroll');
+    containers.forEach(container => {
+      let isDown = false;
+      let startX = 0;
+      let scrollLeftStart = 0;
+
+      // Set cursor for better UX
+      container.style.cursor = 'grab';
+
+      container.addEventListener('pointerdown', (e) => {
+        // Only handle mouse/pen drags; let touch pointers use native scrolling
+        if (e.pointerType === 'touch') return;
+        // Don't start drag if clicking on links or buttons
+        if (e.target && e.target.closest && e.target.closest('a[href], button, input[type="button"], .btn')) return;
+        isDown = true;
+        startX = e.clientX;
+        scrollLeftStart = container.scrollLeft;
+        try { container.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+        container.classList.add('dragging');
+        container.style.scrollBehavior = 'auto';
+        container.style.cursor = 'grabbing';
+      });
+
+      container.addEventListener('pointermove', (e) => {
+        if (!isDown) return;
+        const dx = e.clientX - startX;
+        container.scrollLeft = scrollLeftStart - dx;
+      });
+
+      const finishDrag = (e) => {
+        if (!isDown) return;
+        isDown = false;
+        try { container.releasePointerCapture && container.releasePointerCapture(e && e.pointerId); } catch (err) { /* ignore */ }
+        container.classList.remove('dragging');
+        container.style.scrollBehavior = 'smooth';
+        container.style.cursor = 'grab';
+      };
+
+      ['pointerup','pointercancel','pointerleave'].forEach(evt => container.addEventListener(evt, finishDrag));
+
+      // Prevent native drag-and-drop of images inside our scroll areas
+      container.addEventListener('dragstart', (e) => {
+        e.preventDefault();
       });
     });
   });
