@@ -40,7 +40,7 @@ def default_settings() -> Settings:
         max_job_history=100,
         auto_refresh_enabled=True,
         manual_refresh_interval_minutes=10,
-        user_agent=None,
+        user_agent="Audible/671 CFNetwork/1240.0.4 Darwin/20.6.0",
         allow_non_admin_series_search=True,
         skip_known_series_search=True,
         default_frontpage_slug=None,

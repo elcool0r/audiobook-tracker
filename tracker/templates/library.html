@@ -723,7 +723,7 @@ async function loadKnownSeries() {
     const filtered = sortSeries(getFilteredSeries());
 
     if (!filtered.length) {
-      container.innerHTML = '<div class="alert alert-info">No series found.</div>';
+      container.innerHTML = '<div class="alert alert-info">All known series are in your library.</div>';
       return;
     }
 
