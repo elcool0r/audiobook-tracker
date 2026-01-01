@@ -30,5 +30,7 @@ services:
       MONGO_URI: mongodb://root:changeme123@mongo:27017
       MONGO_DB: audiobook_tracker
       SECRET_KEY: supersecretkey123456789
+      ADMIN_USERNAME: daniel
+      ADMIN_PASSWORD: password123
     ports:
       - "8000:8000"

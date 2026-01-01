@@ -1062,6 +1062,7 @@ class UserCreateRequest(BaseModel):
 
 
 class UserUpdateRequest(BaseModel):
+    username: str | None = None
     password: str | None = None
     role: str | None = None
     date_format: str | None = None
@@ -1169,10 +1170,17 @@ async def api_create_user(payload: UserCreateRequest, user=Depends(get_current_u
 @api_router.put("/users/{username}")
 async def api_update_user(username: str, payload: UserUpdateRequest, user=Depends(get_current_user)):
     _require_admin(user)
-    if username == "admin" and payload.role and payload.role != "admin":
-        raise HTTPException(status_code=400, detail="Cannot change default admin role")
     col = get_users_collection()
+    existing_user = col.find_one({"username": username})
+    if not existing_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if existing_user.get("role") == "admin" and payload.role and payload.role != "admin":
+        raise HTTPException(status_code=400, detail="Cannot change admin role")
     update: Dict[str, Any] = {}
+    if payload.username:
+        if col.find_one({"username": payload.username}):
+            raise HTTPException(status_code=400, detail="Username already exists")
+        update["username"] = payload.username
     if payload.password:
         from .auth import get_password_hash
 
@@ -1184,8 +1192,6 @@ async def api_update_user(username: str, payload: UserUpdateRequest, user=Depend
     if not update:
         raise HTTPException(status_code=400, detail="No changes")
     res = col.update_one({"username": username}, {"$set": update})
-    if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="User not found")
     return {"status": "ok"}
 
 

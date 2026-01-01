@@ -54,10 +54,12 @@ def default_settings() -> Settings:
 
 def ensure_default_admin():
     users = get_users_collection()
+    admin_username = os.getenv("ADMIN_USERNAME", "admin")
+    admin_password = os.getenv("ADMIN_PASSWORD", "admin")
     if users.count_documents({}) == 0:
         users.insert_one({
-            "username": "admin",
-            "password_hash": get_password_hash("admin"),
+            "username": admin_username,
+            "password_hash": get_password_hash(admin_password),
             "role": "admin",
             "date_format": "iso",
         })

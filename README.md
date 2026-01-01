@@ -166,6 +166,8 @@ user_count 3
 
 - `MONGO_URI`: MongoDB connection string (default: mongodb://mongo:27017)
 - `MONGO_DB`: Database name (default: audiobook_tracker)
+- `ADMIN_USERNAME`: Default admin username (default: admin)
+- `ADMIN_PASSWORD`: Default admin password (default: admin)
 
 ### User Settings
 

@@ -407,9 +407,18 @@ def create_app() -> FastAPI:
         return resp
 
     @app.get(_p("/logout"))
-    async def logout(request: Request, user=Depends(get_current_user)):
-        from .auth import log_auth_event
-        log_auth_event("logout", user["username"], request.client.host, request.headers.get("user-agent", ""))
+    async def logout(request: Request):
+        from .auth import log_auth_event, SECRET_KEY, ALGORITHM
+        username = "unknown"
+        token = request.cookies.get(TOKEN_NAME)
+        if token:
+            try:
+                from jose import jwt
+                payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+                username = payload.get("sub", "unknown")
+            except:
+                pass
+        log_auth_event("logout", username, request.client.host, request.headers.get("user-agent", ""))
         resp = RedirectResponse(url=_p("/login"), status_code=302)
         resp.delete_cookie(TOKEN_NAME)
         return resp
