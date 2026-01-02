@@ -94,9 +94,19 @@ async function loadUsers() {
           } else {
             const err = await r.json();
             alert('Error: ' + (err.detail || 'Unknown error'));
+            // Restore UI to original state on error
+            usernameContainer.replaceChild(strong, input);
+            editUsernameBtn.style.display = '';
+            saveBtn.remove();
+            cancelBtn.remove();
           }
         } catch (e) {
           alert('Error updating username');
+          // Restore UI to original state on error
+          usernameContainer.replaceChild(strong, input);
+          editUsernameBtn.style.display = '';
+          saveBtn.remove();
+          cancelBtn.remove();
         }
       };
       const cancelBtn = document.createElement('button');
