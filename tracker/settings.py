@@ -26,6 +26,7 @@ class Settings(BaseModel):
     debug_logging: bool = False
     developer_mode: bool = False
     default_num_results: int = 10
+    google_analytics_id: Optional[str] = None
 
 
 def default_settings() -> Settings:
@@ -40,7 +41,7 @@ def default_settings() -> Settings:
         max_job_history=100,
         auto_refresh_enabled=True,
         manual_refresh_interval_minutes=10,
-        user_agent=None,
+        user_agent="Audible/671 CFNetwork/1240.0.4 Darwin/20.6.0",
         allow_non_admin_series_search=True,
         skip_known_series_search=True,
         default_frontpage_slug=None,
@@ -49,15 +50,18 @@ def default_settings() -> Settings:
         debug_logging=False,
         developer_mode=False,
         default_num_results=10,
+        google_analytics_id=None,
     )
 
 
 def ensure_default_admin():
     users = get_users_collection()
+    admin_username = os.getenv("ADMIN_USERNAME", "admin")
+    admin_password = os.getenv("ADMIN_PASSWORD", "admin")
     if users.count_documents({}) == 0:
         users.insert_one({
-            "username": "admin",
-            "password_hash": get_password_hash("admin"),
+            "username": admin_username,
+            "password_hash": get_password_hash(admin_password),
             "role": "admin",
             "date_format": "iso",
         })

@@ -8,7 +8,7 @@
         <h5 class="card-title">Add User</h5>
         <form id="addUserForm">
           <div class="mb-2"><input class="form-control" name="username" placeholder="Username" required /></div>
-          <div class="mb-2"><input class="form-control" name="password" placeholder="Password" required type="password" /></div>
+          <div class="mb-2"><input class="form-control" name="password" placeholder="Password" required type="password" data-bwignore="true" /></div>
           <div class="mb-2">
             <select class="form-select" name="role">
               <option value="user">User</option>
@@ -30,6 +30,7 @@
   </div>
 </div>
 <script>
+const currentUsername = '{{ user.username }}';
 async function loadUsers() {
   const r = await fetch(apiPath('/api/users'));
   if (!r.ok) { document.getElementById('usersList').innerHTML = '<div class="alert alert-danger">Forbidden</div>'; return; }
@@ -45,9 +46,73 @@ async function loadUsers() {
     const row = document.createElement('div');
     row.className = 'd-flex justify-content-between align-items-center';
     const left = document.createElement('div');
+    const usernameContainer = document.createElement('div');
+    usernameContainer.className = 'd-flex align-items-center';
     const strong = document.createElement('strong');
     strong.textContent = u.username;
-    left.appendChild(strong);
+    usernameContainer.appendChild(strong);
+    const editUsernameBtn = document.createElement('button');
+    editUsernameBtn.className = 'btn btn-sm btn-link ms-1 p-0';
+    editUsernameBtn.innerHTML = '✏️';
+    editUsernameBtn.title = 'Edit username';
+    editUsernameBtn.onclick = () => {
+      if (u.username === currentUsername) {
+        if (!confirm('Changing your own username will log you out. Continue?')) return;
+      }
+      const input = document.createElement('input');
+      input.className = 'form-control form-control-sm ms-1';
+      input.style.width = '120px';
+      input.value = u.username;
+      usernameContainer.replaceChild(input, strong);
+      editUsernameBtn.style.display = 'none';
+      const saveBtn = document.createElement('button');
+      saveBtn.className = 'btn btn-sm btn-success ms-1';
+      saveBtn.textContent = 'Save';
+      saveBtn.onclick = async () => {
+        const newUsername = input.value.trim();
+        if (!newUsername) return;
+        if (newUsername === u.username) {
+          usernameContainer.replaceChild(strong, input);
+          editUsernameBtn.style.display = '';
+          saveBtn.remove();
+          cancelBtn.remove();
+          return;
+        }
+        try {
+          const r = await fetch(apiPath(`/api/users/${encodeURIComponent(u.username)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: newUsername }) });
+          if (r.ok) {
+            if (u.username === currentUsername) {
+              // Clean up edit state before navigating away
+              usernameContainer.replaceChild(strong, input);
+              editUsernameBtn.style.display = '';
+              saveBtn.remove();
+              cancelBtn.remove();
+              window.location.href = '/config/logout';
+            } else {
+              loadUsers();
+            }
+          } else {
+            const err = await r.json();
+            alert('Error: ' + (err.detail || 'Unknown error'));
+          }
+        } catch (e) {
+          alert('Error updating username');
+        }
+      };
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'btn btn-sm btn-secondary ms-1';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.onclick = () => {
+        usernameContainer.replaceChild(strong, input);
+        editUsernameBtn.style.display = '';
+        saveBtn.remove();
+        cancelBtn.remove();
+      };
+      usernameContainer.appendChild(saveBtn);
+      usernameContainer.appendChild(cancelBtn);
+    };
+    usernameContainer.appendChild(editUsernameBtn);
+    left.appendChild(usernameContainer);
     const badge = document.createElement('span');
     badge.className = 'badge text-bg-secondary ms-2';
     badge.textContent = u.role || 'user';
@@ -59,7 +124,7 @@ async function loadUsers() {
     row.appendChild(left);
     const right = document.createElement('div');
     // Privacy feature removed
-    if (u.username !== 'admin') {
+    if (u.role !== 'admin') {
       const roleBtn = document.createElement('button');
       roleBtn.className = 'btn btn-sm btn-outline-primary ms-2';
       roleBtn.textContent = u.role === 'admin' ? 'Demote' : 'Promote';
@@ -82,7 +147,7 @@ async function loadUsers() {
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-outline-danger ms-2';
     delBtn.textContent = 'Delete';
-    delBtn.disabled = u.username === 'admin';
+    delBtn.disabled = u.role === 'admin';
     delBtn.onclick = async () => {
       if (!confirm('Delete user ' + u.username + '?')) return;
       await fetch(apiPath(`/api/users/${encodeURIComponent(u.username)}`), { method: 'DELETE' });

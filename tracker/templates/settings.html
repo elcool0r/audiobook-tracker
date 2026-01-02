@@ -32,7 +32,7 @@
       <div class="mb-3">
         <label class="form-label">User Agent (optional)</label>
         <input class="form-control" name="user_agent" placeholder="e.g., Mozilla/5.0 (Windows NT 10.0; Win64; x64)" value="{{ settings.user_agent or '' }}" />
-        <div class="form-text">Custom User-Agent header for API requests. Leave empty to use default.</div>
+        <div class="form-text">Custom User-Agent header for API requests. Leave empty to use default: Audible/671 CFNetwork/1240.0.4 Darwin/20.6.0</div>
       </div>
       <div class="form-check form-switch">
         <input class="form-check-input" type="checkbox" name="allow_non_admin_series_search" id="allowNonAdminSeriesSearch" {% if settings.allow_non_admin_series_search %}checked{% endif %} />
@@ -103,6 +103,22 @@
         <button type="button" class="btn btn-sm btn-outline-primary" id="assignScheduleBtn">Assign new schedule to all series</button>
         <button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="refreshAllBtn">Refresh All Series now</button>
         <div id="rescheduleResult" class="mt-2" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">Analytics</div>
+    <div class="card-body">
+      <div class="mb-3">
+        <label class="form-label">Google Analytics ID (optional)</label>
+        <input class="form-control"
+               name="google_analytics_id"
+               placeholder="G-XXXXXXXXXX or UA-XXXXXXXXX-X"
+               value="{{ settings.google_analytics_id or '' }}"
+               pattern="^(G-[A-Z0-9]{10}|UA-\d{4,10}-\d{1,4})$"
+               title="Enter a valid Google Analytics ID (e.g., G-XXXXXXXXXX or UA-XXXXXXXXX-X)" />
+        <div class="form-text">Google Analytics Measurement ID for tracking frontpage visits. Leave empty to disable analytics.</div>
       </div>
     </div>
   </div>
@@ -203,7 +219,8 @@ form.addEventListener('submit', async (ev) => {
     proxy_username: form.proxy_username.value || null,
     proxy_password: form.proxy_password.value || null,
     secret_key: currentSettings && currentSettings.secret_key || null,
-    users_can_edit_frontpage_slug: form.users_can_edit_frontpage_slug.checked || false
+    users_can_edit_frontpage_slug: form.users_can_edit_frontpage_slug.checked || false,
+    google_analytics_id: form.google_analytics_id.value || null
   };
   const resp = await fetch(apiPath('/api/settings'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
   if (resp.ok) {

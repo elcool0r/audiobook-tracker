@@ -57,7 +57,7 @@
       h5.appendChild(document.createTextNode(b.title || ''));
       if (seriesData.narrator_warnings && seriesData.narrator_warnings.includes(b.title)) {
         const icon = document.createElement('i');
-        icon.className = 'bi bi-exclamation-triangle text-warning ms-1';
+        icon.className = 'bi bi-mic text-warning ms-1';
         icon.setAttribute('data-bs-toggle', 'tooltip');
         icon.setAttribute('data-bs-placement', 'top');
         icon.setAttribute('data-bs-title', 'Warning: This book has a different narrator than the first book in the series.');
