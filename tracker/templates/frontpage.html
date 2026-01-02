@@ -4,12 +4,12 @@
 {% block content %}
 {% if settings.google_analytics_id %}
 <!-- Google Analytics -->
-<script async src="https://www.googletagmanager.com/gtag/js?id={{ settings.google_analytics_id }}"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id={{ settings.google_analytics_id|urlencode }}"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   gtag('js', new Date());
-  gtag('config', '{{ settings.google_analytics_id }}');
+  gtag('config', '{{ settings.google_analytics_id|escapejs }}');
 </script>
 {% endif %}
   <div class="row mb-4">
