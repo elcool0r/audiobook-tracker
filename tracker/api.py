@@ -1194,6 +1194,15 @@ async def api_update_user(username: str, payload: UserUpdateRequest, user=Depend
     if not update:
         raise HTTPException(status_code=400, detail="No changes")
     res = col.update_one({"username": username}, {"$set": update})
+    
+    # Update username in user_library collection if username was changed
+    if payload.username:
+        lib_col = get_user_library_collection()
+        lib_col.update_many(
+            {"username": username},
+            {"$set": {"username": payload.username}}
+        )
+    
     return {"status": "ok"}
 
 
