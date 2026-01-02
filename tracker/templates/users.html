@@ -68,14 +68,20 @@ async function loadUsers() {
       const saveBtn = document.createElement('button');
       saveBtn.className = 'btn btn-sm btn-success ms-1';
       saveBtn.textContent = 'Save';
+      
+      // Helper function to restore UI to original state
+      const restoreUI = () => {
+        usernameContainer.replaceChild(strong, input);
+        editUsernameBtn.style.display = '';
+        saveBtn.remove();
+        cancelBtn.remove();
+      };
+      
       saveBtn.onclick = async () => {
         const newUsername = input.value.trim();
         if (!newUsername) return;
         if (newUsername === u.username) {
-          usernameContainer.replaceChild(strong, input);
-          editUsernameBtn.style.display = '';
-          saveBtn.remove();
-          cancelBtn.remove();
+          restoreUI();
           return;
         }
         try {
@@ -83,10 +89,7 @@ async function loadUsers() {
           if (r.ok) {
             if (u.username === currentUsername) {
               // Clean up edit state before navigating away
-              usernameContainer.replaceChild(strong, input);
-              editUsernameBtn.style.display = '';
-              saveBtn.remove();
-              cancelBtn.remove();
+              restoreUI();
               window.location.href = '/config/logout';
             } else {
               loadUsers();
@@ -94,30 +97,17 @@ async function loadUsers() {
           } else {
             const err = await r.json();
             alert('Error: ' + (err.detail || 'Unknown error'));
-            // Restore UI to original state on error
-            usernameContainer.replaceChild(strong, input);
-            editUsernameBtn.style.display = '';
-            saveBtn.remove();
-            cancelBtn.remove();
+            restoreUI();
           }
         } catch (e) {
           alert('Error updating username');
-          // Restore UI to original state on error
-          usernameContainer.replaceChild(strong, input);
-          editUsernameBtn.style.display = '';
-          saveBtn.remove();
-          cancelBtn.remove();
+          restoreUI();
         }
       };
       const cancelBtn = document.createElement('button');
       cancelBtn.className = 'btn btn-sm btn-secondary ms-1';
       cancelBtn.textContent = 'Cancel';
-      cancelBtn.onclick = () => {
-        usernameContainer.replaceChild(strong, input);
-        editUsernameBtn.style.display = '';
-        saveBtn.remove();
-        cancelBtn.remove();
-      };
+      cancelBtn.onclick = restoreUI;
       usernameContainer.appendChild(saveBtn);
       usernameContainer.appendChild(cancelBtn);
     };
