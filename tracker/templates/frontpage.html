@@ -16,7 +16,7 @@
             <img src="{{ b.image }}" class="card-img-top" alt="Cover" draggable="false" />
             {% endif %}
             <div class="card-body">
-              <h5 class="card-title">{% if b.narrator_warning and show_narrator_warnings %}<i class="bi bi-exclamation-triangle text-warning me-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Different narrator than the first book in the series"></i>{% endif %}{{ b.title }}</h5>
+              <h5 class="card-title">{% if b.narrator_warning and show_narrator_warnings %}<i class="bi bi-mic text-warning me-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Different narrator than the first book in the series"></i>{% endif %}{{ b.title }}</h5>
               <div class="card-subtitle text-muted">{{ b.series }}</div>
             <div class="mt-2"><strong>Release:</strong> {{ b.release_str }}</div>
               {% if b.narrators %}
@@ -56,7 +56,7 @@
             <img src="{{ b.image }}" class="card-img-top" alt="Cover" draggable="false" />
             {% endif %}
             <div class="card-body">
-              <h5 class="card-title">{% if b.narrator_warning and show_narrator_warnings %}<i class="bi bi-exclamation-triangle text-warning me-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Different narrator than the first book in the series"></i>{% endif %}{{ b.title }}</h5>
+              <h5 class="card-title">{% if b.narrator_warning and show_narrator_warnings %}<i class="bi bi-mic text-warning me-1" data-bs-toggle="tooltip" data-bs-placement="top" title="Different narrator than the first book in the series"></i>{% endif %}{{ b.title }}</h5>
               <div class="card-subtitle text-muted">{{ b.series }}</div>
               <div class="card-subtitle text-muted">Released: {{ b.release_str }}</div>
               {% if b.runtime_str %}
@@ -105,7 +105,7 @@
                 </td>
 
                   <td class="series-col" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                  {% if s.narrator_warnings and show_narrator_warnings %}<i class="bi bi-exclamation-triangle text-warning me-1" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" data-bs-title="<strong>{{ s.narrator_warnings|length }} {{ 'Book' if s.narrator_warnings|length == 1 else 'Books' }} with {{ 'a different narrator' if s.narrator_warnings|length == 1 else 'different narrators' }}:</strong><br><ul class='mb-0'><li>{{ s.narrator_warnings|join('</li><li>') }}</li></ul>"|safe></i>{% endif %}
+                  {% if s.narrator_warnings and show_narrator_warnings %}<i class="bi bi-mic text-warning me-1" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" data-bs-title="<strong>{{ s.narrator_warnings|length }} {{ 'Book' if s.narrator_warnings|length == 1 else 'Books' }} with {{ 'a different narrator' if s.narrator_warnings|length == 1 else 'different narrators' }}:</strong><br><ul class='mb-0'><li>{{ s.narrator_warnings|join('</li><li>') }}</li></ul>"|safe></i>{% endif %}
                   {% if s.url %}
                   <a href="{{ s.url }}" class="series-link d-inline-block text-decoration-none" title="{{ s.title }}">{{ s.title }}</a>
                   {% else %}

@@ -456,7 +456,7 @@ async function loadSeries() {
       try {
         if (series.narrator_warnings && Array.isArray(series.narrator_warnings) && b.title && series.narrator_warnings.includes(b.title)) {
           const warn = document.createElement('i');
-          warn.className = 'bi bi-exclamation-triangle text-warning ms-1';
+          warn.className = 'bi bi-mic text-warning ms-1';
           warn.setAttribute('data-bs-toggle', 'tooltip');
           warn.setAttribute('data-bs-placement', 'top');
           warn.setAttribute('data-bs-title', 'Warning: This book has a different narrator than the first book in the series.');
@@ -563,14 +563,14 @@ async function loadSeries() {
               // Update the warning icon if present (show only when not ignored and the title remains in warnings)
               const titleEl = li.querySelector('strong');
               if (titleEl) {
-                const existingWarn = titleEl.querySelector('.bi-exclamation-triangle');
+                const existingWarn = titleEl.querySelector('.bi-mic');
                 const shouldShowWarn = !newIgnored && series.narrator_warnings && series.narrator_warnings.includes(b.title);
                 if (existingWarn) {
                   existingWarn.style.display = shouldShowWarn ? '' : 'none';
                 } else if (shouldShowWarn) {
                   // create one if needed
                   const warn = document.createElement('i');
-                  warn.className = 'bi bi-exclamation-triangle text-warning ms-1';
+                  warn.className = 'bi bi-mic text-warning ms-1';
                   warn.setAttribute('data-bs-toggle', 'tooltip');
                   warn.setAttribute('data-bs-placement', 'top');
                   warn.setAttribute('data-bs-html', 'true');
