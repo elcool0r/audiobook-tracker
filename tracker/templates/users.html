@@ -119,17 +119,15 @@ async function loadUsers() {
     row.appendChild(left);
     const right = document.createElement('div');
     // Privacy feature removed
-    if (u.role !== 'admin') {
-      const roleBtn = document.createElement('button');
-      roleBtn.className = 'btn btn-sm btn-outline-primary ms-2';
-      roleBtn.textContent = u.role === 'admin' ? 'Demote' : 'Promote';
-      roleBtn.onclick = async () => {
-        const next = u.role === 'admin' ? 'user' : 'admin';
-        await fetch(apiPath(`/api/users/${encodeURIComponent(u.username)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: next }) });
-        loadUsers();
-      };
-      right.appendChild(roleBtn);
-    }
+    const roleBtn = document.createElement('button');
+    roleBtn.className = 'btn btn-sm btn-outline-primary ms-2';
+    roleBtn.textContent = u.role === 'admin' ? 'Demote' : 'Promote';
+    roleBtn.onclick = async () => {
+      const next = u.role === 'admin' ? 'user' : 'admin';
+      await fetch(apiPath(`/api/users/${encodeURIComponent(u.username)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: next }) });
+      loadUsers();
+    };
+    right.appendChild(roleBtn);
     const resetBtn = document.createElement('button');
     resetBtn.className = 'btn btn-sm btn-outline-danger ms-2';
     resetBtn.textContent = 'Reset Password';
