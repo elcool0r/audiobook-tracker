@@ -112,7 +112,12 @@
     <div class="card-body">
       <div class="mb-3">
         <label class="form-label">Google Analytics ID (optional)</label>
-        <input class="form-control" name="google_analytics_id" placeholder="G-XXXXXXXXXX or UA-XXXXXXXXX-X" value="{{ settings.google_analytics_id or '' }}" />
+        <input class="form-control"
+               name="google_analytics_id"
+               placeholder="G-XXXXXXXXXX or UA-XXXXXXXXX-X"
+               value="{{ settings.google_analytics_id or '' }}"
+               pattern="^(G-[A-Z0-9]{10}|UA-\d{4,10}-\d{1,4})$"
+               title="Enter a valid Google Analytics ID (e.g., G-XXXXXXXXXX or UA-XXXXXXXXX-X)" />
         <div class="form-text">Google Analytics Measurement ID for tracking frontpage visits. Leave empty to disable analytics.</div>
       </div>
     </div>
