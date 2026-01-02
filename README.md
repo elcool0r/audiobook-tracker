@@ -9,6 +9,7 @@ It does not pirate or download any actual audiobooks. Get an Audible subscriptio
 - **Series Tracking**: Monitor audiobook series from Audible with automatic updates
 - **Release Notifications**: Get notified when new books are released in tracked series
 - **User Frontpages**: Shareable pages showing your tracked series and upcoming releases
+- **Audible URL resolution**: Resolve Audible book URLs by following redirects so the "View on Audible" links go to the canonical Audible page (falls back to the original URL on failure)
 - **Admin Interface**: Web-based admin panel for managing users, series, and jobs
 - **Library Management**: Browse and search your personal audiobook collection
 - **Series Statistics**: Interactive charts showing release dates, runtime trends, and ratings over time

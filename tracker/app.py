@@ -20,6 +20,9 @@ from .auth import get_current_user, verify_password, create_access_token, TOKEN_
 from .db import get_users_collection, get_series_collection
 from .api import api_router
 from .library import ensure_indexes, rebuild_series_user_counts, visible_books
+import requests
+from functools import lru_cache
+from .utils import resolve_audible_url
 
 
 def convert_for_json(obj):
@@ -33,6 +36,63 @@ def convert_for_json(obj):
         return [convert_for_json(item) for item in obj]
     else:
         return obj
+
+# Resolve Audible URLs by following redirects. Cached to avoid repeated network calls.
+@lru_cache(maxsize=1024)
+def resolve_audible_url(url: str) -> str:
+    """Return the final URL after following redirects for Audible links. If not an Audible URL
+    or any error occurs, return the original URL unchanged."""
+    if not url:
+        return url
+    try:
+        if "audible" not in url.lower():
+            return url
+        timeout = 3
+        # Try HEAD first to avoid fetching body
+        try:
+            r = requests.head(url, allow_redirects=True, timeout=timeout)
+            final = getattr(r, "url", None)
+            if final:
+                return final
+        except Exception:
+            pass
+        # Fallback to GET if HEAD didn't return a final URL
+        try:
+            r = requests.get(url, allow_redirects=True, timeout=timeout)
+            return getattr(r, "url", url)
+        except Exception:
+            return url
+    except Exception:
+        return url
+
+# Resolve Audible URLs by following redirects. Cached to avoid repeated network calls.
+@lru_cache(maxsize=1024)
+def resolve_audible_url(url: str) -> str:
+    """Return the final URL after following redirects for Audible links. If not an Audible URL
+    or any error occurs, return the original URL unchanged."""
+    if not url:
+        return url
+    try:
+        if "audible" not in url.lower():
+            return url
+        timeout = 3
+        # Try HEAD first to avoid fetching body
+        try:
+            r = requests.head(url, allow_redirects=True, timeout=timeout)
+            final = getattr(r, "url", None)
+            if final:
+                return final
+        except Exception:
+            pass
+        # Fallback to GET if HEAD didn't return a final URL
+        try:
+            r = requests.get(url, allow_redirects=True, timeout=timeout)
+            return getattr(r, "url", url)
+        except Exception:
+            return url
+    except Exception:
+        return url
+
 from .settings import load_settings, ensure_default_admin
 from .__version__ import __version__
 from .tasks import worker
@@ -320,6 +380,16 @@ def create_app() -> FastAPI:
             "slug": user_doc.get("frontpage_slug") or username,
             "username": username,
         }
+
+        # Resolve Audible URLs for upcoming/latest cards (follow redirects); fallback to original URL
+        try:
+            for card in upcoming_cards + latest_cards:
+                u = card.get("url")
+                if u and "audible" in (u or "").lower():
+                    card["url"] = resolve_audible_url(u)
+        except Exception:
+            # If resolution fails, leave original URLs intact
+            pass
 
         return templates.TemplateResponse(
             "frontpage.html",
@@ -643,6 +713,16 @@ def create_app() -> FastAPI:
             "slug": user_doc.get("frontpage_slug") or username,
             "username": username,
         }
+
+        # Resolve Audible URLs for upcoming/latest cards (follow redirects); fallback to original URL
+        try:
+            for card in upcoming_cards + latest_cards:
+                u = card.get("url")
+                if u and "audible" in (u or "").lower():
+                    card["url"] = resolve_audible_url(u)
+        except Exception:
+            # If resolution fails, leave original URLs intact
+            pass
 
         return templates.TemplateResponse(
             "frontpage.html",

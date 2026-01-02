@@ -24,6 +24,7 @@ from lib.audible_api_search import get_product_by_asin
 from .settings import load_settings
 from .db import get_jobs_collection, get_series_collection, get_users_collection, get_user_library_collection
 from lib.audible_api_search import DEFAULT_RESPONSE_GROUPS
+from .utils import resolve_audible_url
 
 AUTO_REFRESH_CYCLE_SEC = 24 * 60 * 60
 
@@ -193,6 +194,9 @@ class TaskWorker:
             if isinstance(parent_obj, dict) and parent_obj.get("issue_date") == "2200-01-01":
                 logging.warning(f"Series {asin} has placeholder issue_date (2200-01-01), proceeding with fetch")
             target_asin = parent_asin or asin
+            series_col = get_series_collection()
+            old_doc = series_col.find_one({"_id": target_asin}, {"books": 1})
+            old_books_count = len(old_doc.get("books", [])) if old_doc else 0
             processed_books = set_series_books(target_asin, books)
             touch_series_fetched(target_asin)
             narrator_warnings = compute_narrator_warnings(processed_books, target_asin)
@@ -203,7 +207,15 @@ class TaskWorker:
                 series_title = parent_obj.get("title") or parent_obj.get("publication_name") or parent_obj.get("product_title")
                 series_url = parent_obj.get("url")
                 if series_title or series_url:
-                    ensure_series_document(target_asin, series_title, series_url)
+                    series_payload, created = ensure_series_document(target_asin, series_title, series_url)
+                    # Resolve Audible URL only if series is new or book data changed
+                    if created or (old_doc and len(processed_books) != old_books_count):
+                        if series_url:
+                            resolved_url = resolve_audible_url(series_url)
+                            if resolved_url != series_url:
+                                series_col.update_one({"_id": target_asin}, {"$set": {"url": resolved_url}})
+                else:
+                    series_payload, created = ensure_series_document(target_asin, None, None)
             
             # Save raw parent series JSON if we fetched it
             if isinstance(parent_obj, dict):
