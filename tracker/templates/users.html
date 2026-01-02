@@ -82,6 +82,11 @@ async function loadUsers() {
           const r = await fetch(apiPath(`/api/users/${encodeURIComponent(u.username)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: newUsername }) });
           if (r.ok) {
             if (u.username === currentUsername) {
+              // Clean up edit state before navigating away
+              usernameContainer.replaceChild(strong, input);
+              editUsernameBtn.style.display = '';
+              saveBtn.remove();
+              cancelBtn.remove();
               window.location.href = '/config/logout';
             } else {
               loadUsers();
