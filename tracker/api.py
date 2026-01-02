@@ -1196,12 +1196,17 @@ async def api_update_user(username: str, payload: UserUpdateRequest, user=Depend
     res = col.update_one({"username": username}, {"$set": update})
     
     # Update username in user_library collection if username was changed
-    if payload.username:
+    # Only do this after the main user update succeeds
+    if payload.username and res.modified_count > 0:
         lib_col = get_user_library_collection()
-        lib_col.update_many(
+        lib_result = lib_col.update_many(
             {"username": username},
             {"$set": {"username": payload.username}}
         )
+        # Log the migration for audit purposes
+        if lib_result.modified_count > 0:
+            import logging
+            logging.info(f"Migrated {lib_result.modified_count} library entries from '{username}' to '{payload.username}'")
     
     return {"status": "ok"}
 
