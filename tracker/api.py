@@ -1154,7 +1154,8 @@ async def api_list_users(user=Depends(get_current_user)):
 async def api_create_user(payload: UserCreateRequest, user=Depends(get_current_user)):
     _require_admin(user)
     col = get_users_collection()
-    if col.find_one({"username": payload.username}):
+    # Case-insensitive username check
+    if col.find_one({"username": {"$regex": f"^{re.escape(payload.username)}$", "$options": "i"}}):
         raise HTTPException(status_code=400, detail="User already exists")
     from .auth import get_password_hash
 
@@ -1180,7 +1181,13 @@ async def api_update_user(username: str, payload: UserUpdateRequest, user=Depend
         raise HTTPException(status_code=400, detail="Cannot change admin role")
     update: Dict[str, Any] = {}
     if payload.username:
-        if col.find_one({"username": payload.username}):
+        # Case-insensitive username check, excluding the current user
+        # This allows renaming to the same username with different casing (e.g., "admin" to "Admin")
+        duplicate_user = col.find_one({
+            "username": {"$regex": f"^{re.escape(payload.username)}$", "$options": "i"},
+            "_id": {"$ne": existing_user["_id"]}
+        })
+        if duplicate_user:
             raise HTTPException(status_code=400, detail="Username already exists")
         update["username"] = payload.username
     if payload.password:
