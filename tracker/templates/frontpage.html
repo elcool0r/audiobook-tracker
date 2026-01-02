@@ -2,6 +2,16 @@
 {% block title %}Frontpage{% endblock %}
 
 {% block content %}
+{% if settings.google_analytics_id %}
+<!-- Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id={{ settings.google_analytics_id }}"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', '{{ settings.google_analytics_id }}');
+</script>
+{% endif %}
   <div class="row mb-4">
     <div class="col">
       <h3 class="mb-3 text-center">Upcoming Releases</h3>

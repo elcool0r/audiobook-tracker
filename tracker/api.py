@@ -93,6 +93,7 @@ class SettingsSaveRequest(BaseModel):
     users_can_edit_frontpage_slug: bool | None = None
     debug_logging: bool | None = None
     developer_mode: bool | None = None
+    google_analytics_id: str | None = None
 
 
 class SeriesBookVisibilityRequest(BaseModel):
@@ -205,6 +206,7 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
         users_can_edit_frontpage_slug=payload.users_can_edit_frontpage_slug if payload.users_can_edit_frontpage_slug is not None else current.users_can_edit_frontpage_slug,
         debug_logging=payload.debug_logging if payload.debug_logging is not None else current.debug_logging,
         developer_mode=payload.developer_mode if payload.developer_mode is not None else current.developer_mode,
+        google_analytics_id=payload.google_analytics_id if payload.google_analytics_id is not None else current.google_analytics_id,
     )
     save_settings(updated)
     try:

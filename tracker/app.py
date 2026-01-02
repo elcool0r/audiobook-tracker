@@ -644,10 +644,13 @@ def create_app() -> FastAPI:
             "username": username,
         }
 
+        settings = load_settings()
+
         return templates.TemplateResponse(
             "frontpage.html",
             {
                 "request": request,
+                "settings": settings,
                 "public_nav": True,
                 "brand_title": "Audiobook Tracker",
                 "hide_nav": True,

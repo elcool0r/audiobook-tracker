@@ -108,6 +108,17 @@
   </div>
 
   <div class="card mb-3">
+    <div class="card-header">Analytics</div>
+    <div class="card-body">
+      <div class="mb-3">
+        <label class="form-label">Google Analytics ID (optional)</label>
+        <input class="form-control" name="google_analytics_id" placeholder="G-XXXXXXXXXX or UA-XXXXXXXXX-X" value="{{ settings.google_analytics_id or '' }}" />
+        <div class="form-text">Google Analytics Measurement ID for tracking frontpage visits. Leave empty to disable analytics.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
     <div class="card-header">Database Maintenance</div>
     <div class="card-body">
       <p class="text-muted small">Remove cached series data and compact database to reclaim disk space. Series titles will be preserved and data will be re-fetched on next refresh.</p>
@@ -203,7 +214,8 @@ form.addEventListener('submit', async (ev) => {
     proxy_username: form.proxy_username.value || null,
     proxy_password: form.proxy_password.value || null,
     secret_key: currentSettings && currentSettings.secret_key || null,
-    users_can_edit_frontpage_slug: form.users_can_edit_frontpage_slug.checked || false
+    users_can_edit_frontpage_slug: form.users_can_edit_frontpage_slug.checked || false,
+    google_analytics_id: form.google_analytics_id.value || null
   };
   const resp = await fetch(apiPath('/api/settings'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
   if (resp.ok) {

@@ -26,6 +26,7 @@ class Settings(BaseModel):
     debug_logging: bool = False
     developer_mode: bool = False
     default_num_results: int = 10
+    google_analytics_id: Optional[str] = None
 
 
 def default_settings() -> Settings:
@@ -49,6 +50,7 @@ def default_settings() -> Settings:
         debug_logging=False,
         developer_mode=False,
         default_num_results=10,
+        google_analytics_id=None,
     )
 
 
