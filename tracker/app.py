@@ -416,8 +416,12 @@ def create_app() -> FastAPI:
                 from jose import jwt
                 payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
                 username = payload.get("sub", "unknown")
-            except:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Failed to decode JWT during logout from %s: %s",
+                    request.client.host if request.client else "unknown",
+                    str(e),
+                )
         log_auth_event("logout", username, request.client.host, request.headers.get("user-agent", ""))
         resp = RedirectResponse(url=_p("/login"), status_code=302)
         resp.delete_cookie(TOKEN_NAME)
