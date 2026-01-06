@@ -617,6 +617,7 @@ class TaskWorker:
             series_title = series_doc.get("title") or f"Series {asin}"
             heading = "Audiobook released" if len(pending) == 1 else "Audiobooks released"
             body = f"{heading} in '{series_title}':\n- " + "\n- ".join(titles)
+            attachments = [b.get("image_url") for b, _ in pending if b.get("image_url")]
 
             send_error = None
             try:
@@ -625,7 +626,7 @@ class TaskWorker:
                 for u in urls:
                     ap.add(u)
                 try:
-                    result = ap.notify(title="Audiobook Release", body=body)
+                    result = ap.notify(title="Audiobook Release", body=body, attach=attachments)
                     if not result:
                         send_error = "Apprise notification failed (all services returned failure)"
                     else:
@@ -853,9 +854,10 @@ class TaskWorker:
             if notify_new and pending_new:
                 to_send = [a for a in pending_new if a not in notified_new]
                 titles = [book_map[a].get("title") or a for a in to_send if a in book_map]
+                attachments = [book_map[a].get("image_url") for a in to_send if a in book_map and book_map[a].get("image_url")]
                 if titles:
                     body = f"New audiobooks found in '{series_title}':\n- " + "\n- ".join(titles)
-                    to_send_msgs.append(("New Audiobook(s)", body, to_send))
+                    to_send_msgs.append(("New Audiobook(s)", body, to_send, attachments))
 
             # Release notifications on the configured release day
             if notify_rel and release_candidates:
@@ -874,9 +876,10 @@ class TaskWorker:
                         for b, dt in pending
                     ]
                     pending_asins = [_get(b, "asin") for b, _ in pending if _get(b, "asin")]
+                    attachments = [b.get("image_url") for b, _ in pending if b.get("image_url")]
                     heading = "Audiobook released" if len(pending) == 1 else "Audiobooks released"
                     body = f"{heading} in '{series_title}':\n- " + "\n- ".join(titles)
-                    to_send_msgs.append(("Audiobook Release", body, pending_asins))
+                    to_send_msgs.append(("Audiobook Release", body, pending_asins, attachments))
 
             if not to_send_msgs:
                 continue
@@ -891,11 +894,12 @@ class TaskWorker:
                 ap = apprise.Apprise()
                 for u in urls:
                     ap.add(u)
-                # send each message (text-only; attachments removed)
+                # send each message with attachments
                 for msg in to_send_msgs:
                     title, body = msg[0], msg[1]
+                    attachments = msg[3] if len(msg) > 3 else []
                     try:
-                        result = ap.notify(title=title, body=body)
+                        result = ap.notify(title=title, body=body, attach=attachments)
                         if not result:
                             apprise_error = "Apprise notification failed (all services returned failure)"
                         else:
