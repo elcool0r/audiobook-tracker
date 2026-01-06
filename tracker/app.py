@@ -15,6 +15,125 @@ from slowapi.middleware import SlowAPIMiddleware
 # from fastapi_csrf_protect.exceptions import CsrfProtectError
 import datetime
 from bson import ObjectId
+from datetime import datetime as _dt, timezone
+import math
+from typing import Optional, Dict, Any
+from .db import get_series_collection
+
+
+def _parse_iso_datetime(value: str | None) -> Optional[_dt]:
+    """Parse an ISO datetime string, accept trailing Z, return a datetime or None."""
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        text = value
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return _dt.fromisoformat(text)
+    except Exception:
+        return None
+
+
+def _get_publication_dt(book: Any, series_asin: Optional[str] = None, series_cache: Optional[Dict[str, Any]] = None) -> Optional[_dt]:
+    """Return publication datetime as naive UTC for a book.
+
+    Steps:
+    - check book.publication_datetime (top-level)
+    - check book.raw.publication_datetime if available
+    - if missing and series_asin provided, look up series and try to find matching book entry or series-level publication_datetime
+    - fall back to release_date at 00:00 UTC
+    Returns naive datetime in UTC or None
+    """
+    def _val(key: str):
+        if isinstance(book, dict):
+            return book.get(key)
+        return getattr(book, key, None) if hasattr(book, key) else None
+
+    raw_pub = _val("publication_datetime")
+    # If top-level publication_datetime missing, check raw.publication_datetime
+    if not raw_pub and isinstance(book, dict):
+        raw_obj = book.get("raw")
+        if isinstance(raw_obj, dict):
+            raw_pub = raw_obj.get("publication_datetime")
+    pub_dt = _parse_iso_datetime(raw_pub) if raw_pub else None
+    if pub_dt:
+        try:
+            if pub_dt.tzinfo:
+                pub_dt = pub_dt.astimezone(timezone.utc).replace(tzinfo=None)
+        except Exception:
+            pass
+        return pub_dt
+
+    # If a series ASIN is provided, consult series collection for a book-level or series-level publication datetime
+    if series_asin:
+        try:
+            cache = series_cache or {}
+            series_doc = cache.get(series_asin)
+            if series_doc is None:
+                series_doc = get_series_collection().find_one({"_id": series_asin})
+                cache[series_asin] = series_doc
+            if isinstance(series_doc, dict):
+                # Try to find matching book in series_doc['books']
+                books = series_doc.get("books") or []
+                book_asin = _val("asin") or (book.get("raw", {}).get("asin") if isinstance(book, dict) else None)
+                for sb in books:
+                    if not isinstance(sb, dict):
+                        continue
+                    if book_asin and sb.get("asin") == book_asin:
+                        # check book publication_datetime
+                        sb_pub = sb.get("publication_datetime") or (sb.get("raw") or {}).get("publication_datetime")
+                        if sb_pub:
+                            sb_dt = _parse_iso_datetime(sb_pub)
+                            if sb_dt:
+                                if sb_dt.tzinfo:
+                                    try:
+                                        sb_dt = sb_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                                    except Exception:
+                                        pass
+                                return sb_dt
+                # Fall back to series-level publication_datetime
+                s_pub = series_doc.get("publication_datetime") or (series_doc.get("raw") or {}).get("publication_datetime")
+                if s_pub:
+                    s_dt = _parse_iso_datetime(s_pub)
+                    if s_dt:
+                        if s_dt.tzinfo:
+                            try:
+                                s_dt = s_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                            except Exception:
+                                pass
+                        return s_dt
+        except Exception:
+            # ignore DB errors, we'll fall back to release_date
+            pass
+
+    # Fallback to release_date at midnight UTC
+    try:
+        rd = _val("release_date")
+        if rd and isinstance(rd, str):
+            ds = rd[:10]
+            y, m, d = ds.split("-")
+            return _dt(int(y), int(m), int(d))
+    except Exception:
+        return None
+    return None
+
+
+def _format_time_left(release_dt: _dt, now: _dt) -> tuple[str, int | None, int | None]:
+    """Return a (time_left_str, hours_left or None, days_left or None).
+
+    If less than 1 day left, return hours (rounded up). Otherwise return days (rounded up).
+    """
+    delta = release_dt - now
+    total_seconds = delta.total_seconds()
+    if total_seconds <= 0:
+        return ("today", None, 0)
+    one_day = 24 * 60 * 60
+    if total_seconds < one_day:
+        hours = math.ceil(total_seconds / 3600)
+        return (f"{hours} hours", hours, None)
+    days = math.ceil(total_seconds / one_day)
+    return (f"{days} days", None, days)
+
 
 from .auth import get_current_user, verify_password, create_access_token, TOKEN_NAME
 from .db import get_users_collection, get_series_collection
@@ -141,6 +260,15 @@ def create_app() -> FastAPI:
 
         from datetime import datetime, timezone
 
+
+        # NOTE: helper funcs moved to module-level for easier testing and series-lookup
+        # See module-level `_parse_iso_datetime` and `_get_publication_dt` functions
+        
+        # Local wrapper to call module helpers with a per-request series cache
+        series_cache: dict = {}
+        def _get_publication_dt_local(book):
+            return _get_publication_dt(book, series_asin=getattr(it, 'asin', None), series_cache=series_cache)
+
         def _parse_date(s):
             try:
                 return datetime.fromisoformat((s or "").split("T")[0]).replace(tzinfo=timezone.utc)
@@ -180,7 +308,7 @@ def create_app() -> FastAPI:
             mins = m % 60
             return f"{h}h {mins}m" if h else f"{mins}m"
 
-        now = datetime.now(timezone.utc)
+        now = _dt.now(timezone.utc).replace(tzinfo=None)
         upcoming_cards = []
         latest_cards = []
         series_rows = []
@@ -198,7 +326,7 @@ def create_app() -> FastAPI:
             series_last_release = None
             series_next_release = None
             for b in visible:
-                rd = _parse_date(getattr(b, "release_date", None))
+                rd = _get_publication_dt_local(b)
                 if not rd:
                     continue
                 if rd <= now and (not series_last_release or rd > series_last_release):
@@ -209,7 +337,8 @@ def create_app() -> FastAPI:
                 if not book_url and getattr(b, "asin", None):
                     book_url = f"https://www.audible.com/pd/{getattr(b, 'asin', '')}"
                 if rd > now:
-                    days = (rd - now).days + (1 if (rd - now).seconds > 0 else 0)
+                    # format time-left as days or hours depending on remaining time
+                    time_left_str, hours_left, days_left = _format_time_left(rd, now)
                     runtime_str = _format_runtime(getattr(b, "runtime", None))
                     upcoming_cards.append({
                         "title": getattr(b, "title", None) or it.title,
@@ -218,8 +347,11 @@ def create_app() -> FastAPI:
                         "runtime": getattr(b, "runtime", None) or "",
                         "runtime_str": runtime_str,
                         "release_dt": rd,
+                        "release_dt_iso": rd.isoformat() + 'Z',
                         "release_str": _format_d(rd),
-                        "days_left": days,
+                        "time_left_str": time_left_str,
+                        "hours_left": hours_left,
+                        "days_left": days_left or 0,
                         "image": getattr(b, "image", None),
                         "url": book_url,
                     })
@@ -232,6 +364,7 @@ def create_app() -> FastAPI:
                         "narrators": getattr(b, "narrators", None) or "",
                         "runtime": getattr(b, "runtime", None) or "",
                         "runtime_str": runtime_str,
+                        "release_dt_iso": rd.isoformat() + 'Z',
                         "release_dt": rd,
                         "release_str": _format_d(rd),
                         "days_ago": days_ago,
@@ -507,7 +640,7 @@ def create_app() -> FastAPI:
             mins = m % 60
             return f"{h}h {mins}m" if h else f"{mins}m"
 
-        now = datetime.now(timezone.utc)
+        now = _dt.now(timezone.utc).replace(tzinfo=None)
         upcoming_cards = []
         latest_cards = []
         series_rows = []
@@ -525,7 +658,7 @@ def create_app() -> FastAPI:
             series_last_release = None
             series_next_release = None
             for b in visible:
-                rd = _parse_date(getattr(b, "release_date", None))
+                rd = _get_publication_dt_local(b)
                 if not rd:
                     continue
                 if rd <= now and (not series_last_release or rd > series_last_release):
@@ -544,6 +677,7 @@ def create_app() -> FastAPI:
                         "narrators": getattr(b, "narrators", None) or "",
                         "runtime": getattr(b, "runtime", None) or "",
                         "runtime_str": runtime_str,
+                        "release_dt_iso": rd.isoformat() + 'Z',
                         "release_dt": rd,
                         "release_str": _format_d(rd),
                         "days_left": days,
@@ -557,6 +691,7 @@ def create_app() -> FastAPI:
                         "title": getattr(b, "title", None) or it.title,
                         "series": it.title,
                         "narrators": getattr(b, "narrators", None) or "",
+                        "release_dt_iso": rd.isoformat() + 'Z',
                         "runtime": getattr(b, "runtime", None) or "",
                         "runtime_str": runtime_str,
                         "release_dt": rd,

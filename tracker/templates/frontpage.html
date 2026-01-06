@@ -20,8 +20,8 @@
           <div class="row row-cols-1 row-cols-sm-2 row-cols-md-4 g-3 {% if upcoming|length < 4 %}justify-content-center{% endif %}">
         {% for b in upcoming %}
         <div class="col">
-          <div class="card h-100">
-            <h6 class="text-center mb-1">{{ b.days_left }} days</h6>
+          <div class="card h-100" data-release-utc="{{ b.release_dt_iso }}">
+            <h6 class="text-center mb-1">{{ b.time_left_str or (b.days_left ~ ' days') }}</h6>
             {% if b.image %}
             <img src="{{ b.image }}" class="card-img-top" alt="Cover" draggable="false" />
             {% endif %}
@@ -60,7 +60,7 @@
           <div class="row row-cols-1 row-cols-sm-2 row-cols-md-4 g-3 {% if latest|length < 4 %}justify-content-center{% endif %}">
         {% for b in latest %}
         <div class="col">
-          <div class="card h-100">
+          <div class="card h-100" data-release-utc="{{ b.release_dt_iso }}">
             <h6 class="text-center mb-1">{% if b.days_ago == 0 %}today{% elif b.days_ago == 1 %}yesterday{% else %}{{ b.days_ago }} days ago{% endif %}</h6>
             {% if b.image %}
             <img src="{{ b.image }}" class="card-img-top" alt="Cover" draggable="false" />
@@ -231,6 +231,105 @@
         e.preventDefault();
       });
     });
+  });
+
+  // Adjust upcoming/latest based on browser time
+  document.addEventListener('DOMContentLoaded', function() {
+    const now = new Date();
+    const upcomingContainer = document.querySelector('.upcoming-scroll .row');
+    const latestContainer = document.querySelector('.latest-scroll .row');
+    if (!upcomingContainer || !latestContainer) return;
+
+    const cols = Array.from(upcomingContainer.querySelectorAll('.col'));
+    cols.forEach(col => {
+      const card = col.querySelector('.card');
+      const releaseUtc = card.getAttribute('data-release-utc');
+      if (releaseUtc) {
+        const releaseDate = new Date(releaseUtc);
+        if (now >= releaseDate) {
+          // Update header
+          const header = card.querySelector('h6');
+          if (header) {
+            const daysAgo = Math.floor((now - releaseDate) / (1000 * 60 * 60 * 24));
+            if (daysAgo === 0) {
+              header.textContent = 'today';
+            } else if (daysAgo === 1) {
+              header.textContent = 'yesterday';
+            } else {
+              header.textContent = `${daysAgo} days ago`;
+            }
+          }
+          // Move to latest
+          latestContainer.appendChild(col);
+        } else {
+          // Update days_left/hours_left if needed
+          const header = card.querySelector('h6');
+          if (header) {
+            const diffMs = releaseDate - now;
+            const oneDayMs = 24 * 60 * 60 * 1000;
+            if (diffMs < oneDayMs) {
+              const hours = Math.ceil(diffMs / (1000 * 60 * 60));
+              header.textContent = `${hours} hours`;
+            } else {
+              const daysLeft = Math.ceil(diffMs / oneDayMs);
+              header.textContent = `${daysLeft} days`;
+            }
+          }
+        }
+      }
+    });
+
+    // Check latest cards
+    const latestCols = Array.from(latestContainer.querySelectorAll('.col'));
+    latestCols.forEach(col => {
+      const card = col.querySelector('.card');
+      const releaseUtc = card.getAttribute('data-release-utc');
+      if (releaseUtc) {
+        const releaseDate = new Date(releaseUtc);
+        if (now < releaseDate) {
+          // Update header to days left or hours if under 1 day
+          const header = card.querySelector('h6');
+          if (header) {
+            const diffMs = releaseDate - now;
+            const oneDayMs = 24 * 60 * 60 * 1000;
+            if (diffMs < oneDayMs) {
+              const hours = Math.ceil(diffMs / (1000 * 60 * 60));
+              header.textContent = `${hours} hours`;
+            } else {
+              const daysLeft = Math.ceil(diffMs / oneDayMs);
+              header.textContent = `${daysLeft} days`;
+            }
+          }
+          // Move to upcoming
+          upcomingContainer.appendChild(col);
+        } else {
+          // Update days ago if needed
+          const header = card.querySelector('h6');
+          if (header) {
+            const daysAgo = Math.floor((now - releaseDate) / (1000 * 60 * 60 * 24));
+            if (daysAgo === 0) {
+              header.textContent = 'today';
+            } else if (daysAgo === 1) {
+              header.textContent = 'yesterday';
+            } else {
+              header.textContent = `${daysAgo} days ago`;
+            }
+          }
+        }
+      }
+    });
+
+    // Update "No upcoming" if empty
+    if (upcomingContainer.children.length === 0) {
+      const parent = upcomingContainer.parentElement;
+      parent.innerHTML = '<div class="text-center text-muted">No upcoming releases found.</div>';
+    }
+
+    // Update "No recent releases" if empty
+    if (latestContainer.children.length === 0) {
+      const parent = latestContainer.parentElement;
+      parent.innerHTML = '<div class="text-center text-muted">No recent releases.</div>';
+    }
   });
   </script>
 {% endblock %}
