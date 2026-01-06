@@ -16,6 +16,7 @@ from slowapi.middleware import SlowAPIMiddleware
 import datetime
 from bson import ObjectId
 from datetime import datetime as _dt, timezone
+import math
 from typing import Optional, Dict, Any
 from .db import get_series_collection
 
@@ -115,6 +116,23 @@ def _get_publication_dt(book: Any, series_asin: Optional[str] = None, series_cac
     except Exception:
         return None
     return None
+
+
+def _format_time_left(release_dt: _dt, now: _dt) -> tuple[str, int | None, int | None]:
+    """Return a (time_left_str, hours_left or None, days_left or None).
+
+    If less than 1 day left, return hours (rounded up). Otherwise return days (rounded up).
+    """
+    delta = release_dt - now
+    total_seconds = delta.total_seconds()
+    if total_seconds <= 0:
+        return ("today", None, 0)
+    one_day = 24 * 60 * 60
+    if total_seconds < one_day:
+        hours = math.ceil(total_seconds / 3600)
+        return (f"{hours} hours", hours, None)
+    days = math.ceil(total_seconds / one_day)
+    return (f"{days} days", None, days)
 
 
 from .auth import get_current_user, verify_password, create_access_token, TOKEN_NAME
@@ -319,7 +337,8 @@ def create_app() -> FastAPI:
                 if not book_url and getattr(b, "asin", None):
                     book_url = f"https://www.audible.com/pd/{getattr(b, 'asin', '')}"
                 if rd > now:
-                    days = (rd - now).days + (1 if (rd - now).seconds > 0 else 0)
+                    # format time-left as days or hours depending on remaining time
+                    time_left_str, hours_left, days_left = _format_time_left(rd, now)
                     runtime_str = _format_runtime(getattr(b, "runtime", None))
                     upcoming_cards.append({
                         "title": getattr(b, "title", None) or it.title,
@@ -330,7 +349,9 @@ def create_app() -> FastAPI:
                         "release_dt": rd,
                         "release_dt_iso": rd.isoformat() + 'Z',
                         "release_str": _format_d(rd),
-                        "days_left": days,
+                        "time_left_str": time_left_str,
+                        "hours_left": hours_left,
+                        "days_left": days_left or 0,
                         "image": getattr(b, "image", None),
                         "url": book_url,
                     })

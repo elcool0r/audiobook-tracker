@@ -21,7 +21,7 @@
         {% for b in upcoming %}
         <div class="col">
           <div class="card h-100" data-release-utc="{{ b.release_dt_iso }}">
-            <h6 class="text-center mb-1">{{ b.days_left }} days</h6>
+            <h6 class="text-center mb-1">{{ b.time_left_str or (b.days_left ~ ' days') }}</h6>
             {% if b.image %}
             <img src="{{ b.image }}" class="card-img-top" alt="Cover" draggable="false" />
             {% endif %}
@@ -262,11 +262,18 @@
           // Move to latest
           latestContainer.appendChild(col);
         } else {
-          // Update days_left if needed
+          // Update days_left/hours_left if needed
           const header = card.querySelector('h6');
           if (header) {
-            const daysLeft = Math.ceil((releaseDate - now) / (1000 * 60 * 60 * 24));
-            header.textContent = `${daysLeft} days`;
+            const diffMs = releaseDate - now;
+            const oneDayMs = 24 * 60 * 60 * 1000;
+            if (diffMs < oneDayMs) {
+              const hours = Math.ceil(diffMs / (1000 * 60 * 60));
+              header.textContent = `${hours} hours`;
+            } else {
+              const daysLeft = Math.ceil(diffMs / oneDayMs);
+              header.textContent = `${daysLeft} days`;
+            }
           }
         }
       }
@@ -280,11 +287,18 @@
       if (releaseUtc) {
         const releaseDate = new Date(releaseUtc);
         if (now < releaseDate) {
-          // Update header to days left
+          // Update header to days left or hours if under 1 day
           const header = card.querySelector('h6');
           if (header) {
-            const daysLeft = Math.ceil((releaseDate - now) / (1000 * 60 * 60 * 24));
-            header.textContent = `${daysLeft} days`;
+            const diffMs = releaseDate - now;
+            const oneDayMs = 24 * 60 * 60 * 1000;
+            if (diffMs < oneDayMs) {
+              const hours = Math.ceil(diffMs / (1000 * 60 * 60));
+              header.textContent = `${hours} hours`;
+            } else {
+              const daysLeft = Math.ceil(diffMs / oneDayMs);
+              header.textContent = `${daysLeft} days`;
+            }
           }
           // Move to upcoming
           upcomingContainer.appendChild(col);
