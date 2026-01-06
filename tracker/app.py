@@ -290,7 +290,7 @@ def create_app() -> FastAPI:
             mins = m % 60
             return f"{h}h {mins}m" if h else f"{mins}m"
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = _dt.now(timezone.utc).replace(tzinfo=None)
         upcoming_cards = []
         latest_cards = []
         series_rows = []
@@ -619,7 +619,7 @@ def create_app() -> FastAPI:
             mins = m % 60
             return f"{h}h {mins}m" if h else f"{mins}m"
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = _dt.now(timezone.utc).replace(tzinfo=None)
         upcoming_cards = []
         latest_cards = []
         series_rows = []
