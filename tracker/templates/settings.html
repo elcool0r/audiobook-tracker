@@ -100,8 +100,8 @@
         <div class="form-text">When enabled, series will be automatically refreshed on a periodic schedule.</div>
       </div>
       <div class="mb-3">
-        <button type="button" class="btn btn-sm btn-outline-primary" id="assignScheduleBtn">Assign new schedule to all series</button>
-        <button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="refreshAllBtn">Refresh All Series now</button>
+        <button type="button" class="btn btn-sm btn-outline-primary two-step-confirm" id="assignScheduleBtn">Assign new schedule to all series</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary ms-2 two-step-confirm" id="refreshAllBtn">Refresh All Series now</button>
         <div id="rescheduleResult" class="mt-2" style="display:none"></div>
       </div>
     </div>
@@ -129,8 +129,8 @@
       <p class="text-muted small">Remove cached series data and compact database to reclaim disk space. Series titles will be preserved and data will be re-fetched on next refresh.</p>
       <p class="text-warning small"><strong>Note:</strong> These operations may take several minutes and will lock the database. The application may be unresponsive during this time.</p>
       <button type="button" class="btn btn-sm btn-outline-info me-2" id="showDbStatsBtn">Show Database Stats</button>
-      <button type="button" class="btn btn-sm btn-outline-danger me-2" id="purgeAndCompactBtn">Purge & Compact Database</button>
-      <button type="button" class="btn btn-sm btn-outline-warning" id="dumpRestoreBtn">Dump & Restore (Reclaim Space)</button>
+      <button type="button" class="btn btn-sm btn-outline-danger me-2 two-step-confirm" id="purgeAndCompactBtn">Purge & Compact Database</button>
+      <button type="button" class="btn btn-sm btn-outline-warning two-step-confirm" id="dumpRestoreBtn">Dump & Restore (Reclaim Space)</button>
       <div id="dbStatsResult" class="mt-3" style="display:none"></div>
       <div id="purgeResult" class="mt-2" style="display:none"></div>
       <div id="dumpRestoreResult" class="mt-2" style="display:none"></div>
@@ -268,7 +268,20 @@ document.getElementById('assignScheduleBtn').addEventListener('click', async () 
   const btn = document.getElementById('assignScheduleBtn');
   const resultDiv = document.getElementById('rescheduleResult');
   
-  if (!confirm('This will assign new schedules to all series evenly over the next 24 hours. Continue?')) {
+  // Two-step confirm without browser alert
+  if (btn.dataset.confirmed !== 'true') {
+    btn.dataset.confirmed = 'true';
+    btn.textContent = 'Confirm';
+    btn.classList.remove('btn-outline-primary');
+    btn.classList.add('btn-primary');
+    setTimeout(() => {
+      if (btn.dataset.confirmed === 'true') {
+        btn.dataset.confirmed = '';
+        btn.textContent = 'Assign new schedule to all series';
+        btn.classList.add('btn-outline-primary');
+        btn.classList.remove('btn-primary');
+      }
+    }, 3000);
     return;
   }
   
@@ -304,7 +317,20 @@ document.getElementById('refreshAllBtn').addEventListener('click', async () => {
   const btn = document.getElementById('refreshAllBtn');
   const resultDiv = document.getElementById('rescheduleResult');
   
-  if (!confirm('This will trigger refresh probes for all series now and then assign a new 24-hour schedule. Continue?')) {
+  // Two-step confirm without browser alert
+  if (btn.dataset.confirmed !== 'true') {
+    btn.dataset.confirmed = 'true';
+    btn.textContent = 'Confirm';
+    btn.classList.remove('btn-outline-secondary');
+    btn.classList.add('btn-secondary');
+    setTimeout(() => {
+      if (btn.dataset.confirmed === 'true') {
+        btn.dataset.confirmed = '';
+        btn.textContent = 'Refresh All Series now';
+        btn.classList.add('btn-outline-secondary');
+        btn.classList.remove('btn-secondary');
+      }
+    }, 3000);
     return;
   }
   
@@ -401,7 +427,20 @@ document.getElementById('purgeAndCompactBtn').addEventListener('click', async ()
   const btn = document.getElementById('purgeAndCompactBtn');
   const resultDiv = document.getElementById('purgeResult');
   
-  if (!confirm('⚠️ WARNING: This will:\n1. Remove all cached series data\n2. Compact the database to reclaim disk space\n\nThis process may take several minutes and will LOCK the database during compaction.\n\nThe application will be unresponsive during this time.\n\nContinue?')) {
+  // Two-step confirm without browser alert
+  if (btn.dataset.confirmed !== 'true') {
+    btn.dataset.confirmed = 'true';
+    btn.textContent = 'Confirm';
+    btn.classList.remove('btn-outline-danger');
+    btn.classList.add('btn-danger');
+    setTimeout(() => {
+      if (btn.dataset.confirmed === 'true') {
+        btn.dataset.confirmed = '';
+        btn.textContent = 'Purge & Compact Database';
+        btn.classList.add('btn-outline-danger');
+        btn.classList.remove('btn-danger');
+      }
+    }, 3000);
     return;
   }
   
@@ -441,7 +480,20 @@ document.getElementById('dumpRestoreBtn').addEventListener('click', async () => 
   const btn = document.getElementById('dumpRestoreBtn');
   const resultDiv = document.getElementById('dumpRestoreResult');
   
-  if (!confirm('⚠️ WARNING: This will dump the entire database and restore it to reclaim disk space.\n\nThis is the MOST EFFECTIVE way to reduce database size (can reduce by 80-90%).\n\nThe process may take several minutes and the application will be unresponsive.\n\nAll data will be preserved.\n\nContinue?')) {
+  // Two-step confirm without browser alert
+  if (btn.dataset.confirmed !== 'true') {
+    btn.dataset.confirmed = 'true';
+    btn.textContent = 'Confirm';
+    btn.classList.remove('btn-outline-warning');
+    btn.classList.add('btn-warning');
+    setTimeout(() => {
+      if (btn.dataset.confirmed === 'true') {
+        btn.dataset.confirmed = '';
+        btn.textContent = 'Dump & Restore (Reclaim Space)';
+        btn.classList.add('btn-outline-warning');
+        btn.classList.remove('btn-warning');
+      }
+    }, 3000);
     return;
   }
   

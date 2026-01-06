@@ -141,10 +141,25 @@ async function loadApiKeys() {
     info.appendChild(desc);
     info.appendChild(details);
     const delBtn = document.createElement('button');
-    delBtn.className = 'btn btn-sm btn-outline-danger';
+    delBtn.className = 'btn btn-sm btn-outline-danger two-step-confirm';
     delBtn.textContent = 'Delete';
     delBtn.onclick = async () => {
-      if (!confirm(`Delete API key "${k.description}"?`)) return;
+      // Two-step confirm without browser alert
+      if (delBtn.dataset.confirmed !== 'true') {
+        delBtn.dataset.confirmed = 'true';
+        delBtn.textContent = 'Confirm';
+        delBtn.classList.remove('btn-outline-danger');
+        delBtn.classList.add('btn-danger');
+        setTimeout(() => {
+          if (delBtn.dataset.confirmed === 'true') {
+            delBtn.dataset.confirmed = '';
+            delBtn.textContent = 'Delete';
+            delBtn.classList.add('btn-outline-danger');
+            delBtn.classList.remove('btn-danger');
+          }
+        }, 3000);
+        return;
+      }
       await fetch(apiPath(`/api/profile/api-keys/${k.id}`), { method: 'DELETE' });
       loadApiKeys();
     };
