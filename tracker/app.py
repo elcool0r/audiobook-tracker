@@ -705,6 +705,23 @@ def create_app() -> FastAPI:
             except Exception:
                 series_cache = {}
 
+        # Pre-load narrator warnings for all series
+        narrator_warnings_map: dict[str, list] = {}
+        if series_asins:
+            try:
+                # Use projection to only load necessary fields
+                docs = get_series_collection().find(
+                    {"_id": {"$in": series_asins}}, 
+                    {"narrator_warnings": 1}
+                )
+                narrator_warnings_map = {
+                    doc.get("_id"): doc.get("narrator_warnings", []) or []
+                    for doc in docs
+                    if isinstance(doc, dict)
+                }
+            except Exception:
+                narrator_warnings_map = {}
+
         for it in library:
             books = it.books if isinstance(it.books, list) else []
             visible = visible_books(books)
