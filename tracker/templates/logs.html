@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
+<div class="container-fluid px-3 px-sm-4">
 <h1>Auth Logs (Admin)</h1>
 <div class="d-flex align-items-center mb-3">
   <button class="btn btn-sm btn-outline-primary me-2" id="refresh">Refresh</button>
@@ -32,4 +33,5 @@ document.getElementById('refresh').addEventListener('click', () => location.relo
 
 render();
 </script>
+</div>
 {% endblock %}

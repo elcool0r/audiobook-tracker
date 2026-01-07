@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
+<div class="container-fluid px-3 px-sm-4">
 <h1>Dashboard</h1>
 <p>Welcome, {{ user.username }}.</p>
 <div class="row">
@@ -50,4 +51,5 @@ document.getElementById('searchForm').addEventListener('submit', async (ev) => {
   document.getElementById('results').innerText = JSON.stringify(j, null, 2);
 });
 </script>
+</div>
 {% endblock %}

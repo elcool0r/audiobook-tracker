@@ -292,6 +292,18 @@ html[data-bs-theme="dark"],
 	}
 }
 
+/* Mobile config tweaks: tighter card padding, full-width primary actions */
+@media (max-width: 575.98px) {
+	.card .card-body { padding: 0.6rem !important; }
+	.card .card-header { padding: 0.55rem 0.75rem; font-size: 0.95rem; }
+	form#settingsForm { padding-bottom: 0.5rem; }
+	/* Make important action buttons stack and fill width on very small screens */
+	.btn-primary, .btn-danger, .btn-warning, .btn-secondary { width: 100%; display: block; margin-bottom: 0.5rem; }
+	.two-step-confirm { min-width: auto; }
+	/* Reduce spacing inside the developer/DB cards to avoid large scrolls */
+	.card .card-body .mb-3 { margin-bottom: 0.5rem !important; }
+}
+
 @media (max-width: 575.98px) {
 	.all-series-table { min-width: 100%; font-size: 0.92rem; }
 	.all-series-table th,
@@ -359,3 +371,5 @@ html[data-bs-theme="dark"],
     min-width: 40px !important;
   }
 }
+
+/* (mobile navbar styles removed — reverted) */

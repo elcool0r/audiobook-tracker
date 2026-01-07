@@ -516,7 +516,7 @@ async def api_public_frontpage(slug: str):
     return {
         "user": {
             "username": username,
-            "date_format": user_doc.get("date_format", "iso"),
+            "date_format": user_doc.get("date_format", "de"),
             "frontpage_slug": user_doc.get("frontpage_slug") or username,
         },
         "library": library,

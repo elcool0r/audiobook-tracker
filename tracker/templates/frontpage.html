@@ -151,11 +151,15 @@
         if (!row.dataset.lastRelease) return -Infinity;
         const parsed = Date.parse(row.dataset.lastRelease);
         return Number.isFinite(parsed) ? parsed : -Infinity;
-      },      nextRelease: row => {
-        if (!row.dataset.nextRelease) return -Infinity;
+      },
+      nextRelease: row => {
+        // Return a sentinel (Infinity) for missing/invalid next-release so
+        // the comparator can treat it as "missing" and keep it at the end.
+        if (!row.dataset.nextRelease) return Infinity;
         const parsed = Date.parse(row.dataset.nextRelease);
-        return Number.isFinite(parsed) ? parsed : -Infinity;
-      },    };
+        return Number.isFinite(parsed) ? parsed : Infinity;
+      },
+    };
     let sortState = { key: null, dir: 1 };
 
     // Initialize bootstrap tooltips for cover previews (match series-admin behavior)
@@ -174,6 +178,13 @@
           const aVal = valueGetters[key](a);
           const bVal = valueGetters[key](b);
           if (aVal === bVal) return 0;
+          // Treat Infinity as "missing" next-release and always place missing
+          // rows at the end regardless of sort direction.
+          const aMissing = aVal === Infinity;
+          const bMissing = bVal === Infinity;
+          if (aMissing && bMissing) return 0;
+          if (aMissing) return 1;
+          if (bMissing) return -1;
           return (aVal > bVal ? 1 : -1) * dir;
         });
         rows.forEach(row => tbody.appendChild(row));

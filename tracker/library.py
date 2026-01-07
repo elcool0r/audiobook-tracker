@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import base64
 import re
 import requests
+import unicodedata
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -172,16 +173,18 @@ def compute_narrator_warnings(books: List[Dict[str, Any]] | None, series_asin: s
     primary_narrator = _get_primary_narrator(first_book.get("narrators"))
     if not primary_narrator:
         return []
-    # Normalize narrator comparison to be case-insensitive and whitespace-tolerant
-    pn_norm = primary_narrator.strip().casefold()
+    # Normalize narrator comparison to be case-insensitive, whitespace-tolerant, and Unicode-normalized
+    pn_norm = unicodedata.normalize('NFKD', primary_narrator.strip()).casefold()
     warnings: List[str] = []
     for book in sorted_books[1:]:
         if book.get("ignore_narrator_warning"):
             continue
         book_narrator = _get_primary_narrator(book.get("narrators"))
-        bn_norm = book_narrator.strip().casefold() if isinstance(book_narrator, str) else None
-        if bn_norm != pn_norm:
-            warnings.append(book.get("title", "Unknown"))
+        if isinstance(book_narrator, str):
+            bn_norm = unicodedata.normalize('NFKD', book_narrator.strip()).casefold()
+            if bn_norm != pn_norm:
+                warnings.append(book.get("title", "Unknown"))
+        # If book_narrator is None, it will be treated as different from any primary narrator
     return warnings
 
 
@@ -714,10 +717,21 @@ def ensure_indexes():
     # Series indexes
     series_col.create_index("title")
     series_col.create_index("next_refresh_at")
+    # Index for frontpage narrator warnings query
+    series_col.create_index("narrator_warnings")
+    # Compound index for series lookups with publication data
+    series_col.create_index([("books.asin", 1), ("books.publication_datetime", 1)])
+    series_col.create_index([("books.raw.asin", 1), ("books.raw.publication_datetime", 1)])
     
     # Library indexes
     lib_col.create_index("username")
     lib_col.create_index("series_asin")
+    # Compound index for user library queries - most important for frontpage performance
+    lib_col.create_index([("username", 1), ("series_asin", 1)])
+    
+    # Users indexes
+    users_col.create_index([("username", 1)], unique=True)
+    users_col.create_index([("frontpage_slug", 1)], unique=True, sparse=True)
     lib_col.create_index([("username", ASCENDING), ("series_asin", ASCENDING)])
     
     # Users indexes
