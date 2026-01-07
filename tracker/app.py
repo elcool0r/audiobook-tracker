@@ -186,6 +186,10 @@ def create_app() -> FastAPI:
             except Exception:
                 series_cache = {}
 
+        # Local wrapper to call module helpers with a per-request series cache
+        def _get_publication_dt_local(book):
+            return _get_publication_dt(book, series_asin=getattr(it, 'asin', None), series_cache=series_cache)
+
         # Pre-load narrator warnings for all series
         narrator_warnings_map: dict[str, list] = {}
         if series_asins:
@@ -608,7 +612,7 @@ def create_app() -> FastAPI:
                     last_refresh_dt = dt
             series_last_release = None
             series_next_release = None
-            series_cache = {}
+            # Use the pre-loaded global series_cache instead of per-series cache
             def _get_publication_dt_local(book):
                 return _get_publication_dt(book, series_asin=getattr(it, 'asin', None), series_cache=series_cache)
             for b in visible:
@@ -703,19 +707,7 @@ def create_app() -> FastAPI:
         latest_cards = latest_cards[:num_latest]
         series_rows.sort(key=lambda x: (x["title"] or ""))
 
-        # Load narrator warnings for series and attach per-card flags
-        series_asins = [row.get("asin") for row in series_rows if row.get("asin")]
-        narrator_warnings_map: dict[str, list] = {}
-        if series_asins:
-            try:
-                docs = get_series_collection().find({"_id": {"$in": series_asins}}, {"narrator_warnings": 1})
-                for doc in docs:
-                    if isinstance(doc, dict):
-                        asin_key = doc.get("_id")
-                        if asin_key:
-                            narrator_warnings_map[asin_key] = doc.get("narrator_warnings", []) or []
-            except Exception:
-                narrator_warnings_map = {}
+        # Narrator warnings already pre-loaded above
         for row in series_rows:
             row["narrator_warnings"] = narrator_warnings_map.get(row.get("asin")) or []
 
