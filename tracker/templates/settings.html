@@ -57,16 +57,7 @@
     </div>
   </div>
 
-  <div class="card mb-3">
-    <div class="card-header">Developer Mode</div>
-    <div class="card-body">
-      <div class="form-check form-switch">
-        <input class="form-check-input" type="checkbox" name="developer_mode" id="developerModeToggle" {% if settings.developer_mode %}checked{% endif %} />
-        <label class="form-check-label" for="developerModeToggle">Enable developer mode</label>
-      </div>
-      <div class="form-text">Enabling this reveals developer-only testing controls (notifications, book edits, duplication) across the admin interface.</div>
-    </div>
-  </div>
+
 
   <div class="card mb-3">
     <div class="card-header">Proxy Settings</div>
@@ -113,6 +104,7 @@
     </div>
   </div>
 
+{% if settings.developer_mode %}
   <div class="card mb-3">
     <div class="card-header">Analytics</div>
     <div class="card-body">
@@ -128,6 +120,7 @@
       </div>
     </div>
   </div>
+{% endif %}
 
 {% if settings.developer_mode %}
   <div class="card mb-3">
@@ -145,6 +138,18 @@
   </div>
 {% endif %}
   
+  <!-- Developer Mode moved to bottom -->
+  <div class="card mb-3">
+    <div class="card-header">Developer Mode</div>
+    <div class="card-body">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" name="developer_mode" id="developerModeToggle" {% if settings.developer_mode %}checked{% endif %} />
+        <label class="form-check-label" for="developerModeToggle">Enable developer mode</label>
+      </div>
+      <div class="form-text">Enabling this reveals developer-only testing controls (notifications, book edits, duplication) across the admin interface.</div>
+    </div>
+  </div>
+
   <button class="btn btn-primary">Save</button>
 </form>
 <div id="saved" style="display:none" class="alert alert-success mt-3">Saved</div>
