@@ -63,7 +63,7 @@ def ensure_default_admin():
             "username": admin_username,
             "password_hash": get_password_hash(admin_password),
             "role": "admin",
-            "date_format": "iso",
+            "date_format": "de",
         })
     # Migrate any legacy 'superadmin' roles to 'admin'
     try:

@@ -6,10 +6,11 @@
 {% endif %}
 <form id="settingsForm" {% if user.role != 'admin' %}disabled{% endif %}>
   <div class="mb-3">
-    <label class="form-label">Public landing slug</label>
-    <input class="form-control" name="default_frontpage_slug" list="frontpageSlugList" value="{{ settings.default_frontpage_slug or '' }}" placeholder="username or frontpage slug" />
-    <datalist id="frontpageSlugList"></datalist>
-    <div class="form-text">Visitors that are not signed in will be redirected to /home/&lt;slug&gt; when / is opened. Leave empty to keep showing the login screen.</div>
+    <label class="form-label">Public landing Page</label>
+    <select class="form-select" name="default_frontpage_slug" id="defaultFrontpageSlugSelect">
+      <option value="">(none — show login)</option>
+    </select>
+    <div class="form-text">Visitors that are not signed in will be redirected to /home/&lt;slug&gt; when / is opened. Choose an existing user slug or leave empty to show the login screen.</div>
     {% if settings.developer_mode %}
     <div class="form-check form-switch mt-2">
       <input class="form-check-input" type="checkbox" name="users_can_edit_frontpage_slug" id="usersCanEditFrontpageSlug" {% if settings.users_can_edit_frontpage_slug %}checked{% endif %} />
@@ -169,9 +170,10 @@ async function loadFrontpageSlugOptions() {
     const r = await fetch(apiPath('/api/users'));
     if (!r.ok) return;
     const users = await r.json();
-    const list = document.getElementById('frontpageSlugList');
-    if (!list) return;
-    list.innerHTML = '';
+    const select = document.getElementById('defaultFrontpageSlugSelect');
+    if (!select) return;
+    // Clear existing (but keep the first "none" option)
+    select.querySelectorAll('option:not([value=""])').forEach(e => e.remove());
     const seen = new Set();
     users.forEach(u => {
       const slug = (u.frontpage_slug || u.username || '').trim();
@@ -180,7 +182,7 @@ async function loadFrontpageSlugOptions() {
       const option = document.createElement('option');
       option.value = slug;
       option.textContent = u.username || slug;
-      list.appendChild(option);
+      select.appendChild(option);
     });
   } catch (err) {
     console.error('Failed to load landing slug options', err);
@@ -191,7 +193,8 @@ async function loadSettings() {
   if (r.ok) {
     currentSettings = await r.json();
     const defaultFp = document.querySelector('[name=default_frontpage_slug]');
-    if (defaultFp) defaultFp.value = currentSettings.default_frontpage_slug || '';
+    const selectFp = document.getElementById('defaultFrontpageSlugSelect');
+    if (selectFp) selectFp.value = currentSettings.default_frontpage_slug || '';
 
     const rateEl = document.querySelector('[name=rate_rps]');
     if (rateEl) rateEl.value = currentSettings.rate_rps;
@@ -242,7 +245,11 @@ const form = document.getElementById('settingsForm');
 form.addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const data = {
-    default_frontpage_slug: form.default_frontpage_slug ? (form.default_frontpage_slug.value || null) : (currentSettings && currentSettings.default_frontpage_slug) || null,
+    default_frontpage_slug: (function(){
+      const sel = document.getElementById('defaultFrontpageSlugSelect');
+      if (sel) return sel.value || null;
+      return form.default_frontpage_slug ? (form.default_frontpage_slug.value || null) : (currentSettings && currentSettings.default_frontpage_slug) || null;
+    })(),
     rate_rps: form.rate_rps ? (parseFloat(form.rate_rps.value) || currentSettings.rate_rps || 2.0) : (currentSettings && currentSettings.rate_rps) || 2.0,
     max_job_history: form.max_job_history ? (parseInt(form.max_job_history.value,10) || currentSettings.max_job_history || 100) : (currentSettings && currentSettings.max_job_history) || 100,
     auto_refresh_enabled: form.auto_refresh_enabled ? form.auto_refresh_enabled.checked || false : (currentSettings && currentSettings.auto_refresh_enabled) || false,

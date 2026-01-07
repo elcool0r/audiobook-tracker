@@ -27,6 +27,9 @@ from lib.audible_api_search import DEFAULT_RESPONSE_GROUPS
 
 AUTO_REFRESH_CYCLE_SEC = 24 * 60 * 60
 
+# Track last prune date so we only prune jobs once per day
+_last_jobs_prune_date = None
+
 
 def _book_asin(book: Any) -> str | None:
     if isinstance(book, dict):
@@ -477,6 +480,11 @@ class TaskWorker:
             try:
                 self._check_due_release_notifications()
                 self._check_new_audiobook_notifications()
+                # Prune old job documents once per day to respect settings.max_job_history
+                try:
+                    _maybe_prune_jobs()
+                except Exception:
+                    pass
             except Exception:
                 pass
             for _ in range(self._release_check_interval_sec):
@@ -1077,6 +1085,35 @@ def _relationships_equal(a, b) -> bool:
             return (x.get("relationship_to_product"), x.get("relationship_type"), x.get("asin"), seq, x.get("title"))
         return sorted(norm, key=key)
     return norm_list(a) == norm_list(b)
+
+
+def _maybe_prune_jobs():
+    """Prune the jobs collection to keep only the most recent `max_job_history` entries.
+
+    This runs at most once per day (UTC) and is safe to call frequently.
+    """
+    global _last_jobs_prune_date
+    try:
+        today = datetime.now(timezone.utc).date()
+        if _last_jobs_prune_date == today:
+            return
+        _last_jobs_prune_date = today
+        settings = load_settings()
+        max_keep = getattr(settings, "max_job_history", None)
+        if not isinstance(max_keep, int) or max_keep <= 0:
+            return
+        col = get_jobs_collection()
+        total = col.count_documents({})
+        if total <= max_keep:
+            return
+        # Get IDs to keep (most recent max_keep jobs)
+        jobs_to_keep = [doc["_id"] for doc in col.find({}).sort([("_id", -1)]).limit(max_keep)]
+        if jobs_to_keep:
+            col.delete_many({"_id": {"$nin": jobs_to_keep}})
+        else:
+            col.delete_many({})
+    except Exception:
+        logging.exception("Failed to prune jobs collection")
 
 
 def enqueue_fetch_series_books(username: str, asin: str, response_groups: str | None = None):

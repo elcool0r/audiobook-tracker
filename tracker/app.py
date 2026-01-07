@@ -243,7 +243,7 @@ def create_app() -> FastAPI:
         if not user_doc:
             return None
         username = user_doc.get("username")
-        date_format = user_doc.get("date_format", "iso")
+        date_format = user_doc.get("date_format", "de")
         library = get_user_library(username)
         # How many latest releases to show (user preference).
         try:
@@ -613,7 +613,7 @@ def create_app() -> FastAPI:
             settings = load_settings()
             return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "User not found", "version": __version__}, status_code=404)
         username = user_doc.get("username")
-        date_format = user_doc.get("date_format", "iso")
+        date_format = user_doc.get("date_format", "de")
         library = get_user_library(username)
         # How many latest releases to show (user preference).
         try:
