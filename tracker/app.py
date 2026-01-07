@@ -437,14 +437,37 @@ def create_app() -> FastAPI:
 
         # Attach per-card narrator warning flags for upcoming and latest lists
         title_to_asin = {row.get("title"): row.get("asin") for row in series_rows if row.get("title")}
+
+        # Detect dramatized adaptations on frontpage cards (case-insensitive) so we can optionally hide warnings for them
+        import re
+        def _card_contains_dramatized(card):
+            for k in ("title", "series", "narrators"):
+                v = card.get(k)
+                if isinstance(v, str) and re.search(r"dramatized adaptation", v, re.IGNORECASE):
+                    return True
+            return False
+        dramatized_titles = set()
+        for card in upcoming_cards + latest_cards:
+            if _card_contains_dramatized(card):
+                dramatized_titles.add(card.get("title"))
+
+        hide_pref = bool(user_doc.get('hide_narrator_warnings_for_dramatized_adaptations', False))
+
         for card in upcoming_cards:
             series_asin = card.get("series_asin") or title_to_asin.get(card.get("series"))
             card["series_asin"] = series_asin
-            card["narrator_warning"] = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
+            base_flag = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
+            card["narrator_warning"] = base_flag and not (hide_pref and card.get("title") in dramatized_titles)
         for card in latest_cards:
             series_asin = card.get("series_asin") or title_to_asin.get(card.get("series"))
             card["series_asin"] = series_asin
-            card["narrator_warning"] = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
+            base_flag = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
+            card["narrator_warning"] = base_flag and not (hide_pref and card.get("title") in dramatized_titles)
+
+        # Also filter series-level narrator_warnings displayed on the frontpage tooltips
+        if hide_pref and dramatized_titles:
+            for row in series_rows:
+                row["narrator_warnings"] = [t for t in (row.get("narrator_warnings") or []) if t not in dramatized_titles]
 
         stats = {
             "series_count": len(library),

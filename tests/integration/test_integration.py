@@ -259,6 +259,40 @@ class TestPageAccess:
                 assert 'Book 2' in response.text
                 assert 'bi bi-mic' not in response.text
 
+    def test_root_hides_dramatized_narrator_warning_when_default_frontpage_set(self, client):
+        """When the global default frontpage slug is set, the root '/' should render the same way and respect the user's preference."""
+        from tracker.auth import get_password_hash
+        mock_users_collection = MagicMock()
+        def mock_find_user(query):
+            or_conditions = query.get("$or")
+            if or_conditions:
+                # frontpage slug lookup
+                return {"username": "admin", "frontpage_slug": "admin", "hide_narrator_warnings_for_dramatized_adaptations": True, "show_narrator_warnings": True, "date_format": "iso"}
+            username = query.get("username")
+            if username == "admin":
+                return {"username": "admin", "password_hash": get_password_hash("admin"), "role": "admin", "failed_attempts": 0, "lock_until": None}
+            return None
+        mock_users_collection.find_one.side_effect = mock_find_user
+        with patch('tracker.db.get_users_collection', return_value=mock_users_collection):
+            with patch('tracker.library.get_user_library') as mock_get_library:
+                mock_series = type('Series', (), {
+                    'title': 'Test Series',
+                    'asin': 'S002',
+                    'url': 'https://example.com/series',
+                    'fetched_at': '2024-01-01T00:00:00Z',
+                    'books': [
+                        type('Book', (), {'title': 'Book 1','release_date':'2024-01-01','url':'https://example.com/book1','asin':'B001','narrators':['Narrator A'],'runtime':360})(),
+                        type('Book', (), {'title': 'Book 2 (Dramatized Adaptation)','release_date':'2024-02-01','url':'https://example.com/book2','asin':'B002','narrators':['Narrator B'],'runtime':300})()
+                    ]
+                })()
+                mock_get_library.return_value = [mock_series]
+                with patch('tracker.settings.load_settings') as mock_load_settings:
+                    mock_load_settings.return_value = type('S', (), {'default_frontpage_slug': 'admin'})()
+                    response = client.get('/')
+                    assert response.status_code == 200
+                    assert 'Book 2' in response.text
+                    assert 'bi bi-mic' not in response.text
+
     def test_profile_page_frontpage_edit_visible_when_enabled(self, client, auth_headers):
         """When the admin enables the setting, the profile should show the frontpage slug input."""
         with patch('tracker.settings.get_settings_collection') as mock_settings_col:
