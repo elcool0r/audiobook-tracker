@@ -172,12 +172,15 @@ def compute_narrator_warnings(books: List[Dict[str, Any]] | None, series_asin: s
     primary_narrator = _get_primary_narrator(first_book.get("narrators"))
     if not primary_narrator:
         return []
+    # Normalize narrator comparison to be case-insensitive and whitespace-tolerant
+    pn_norm = primary_narrator.strip().casefold()
     warnings: List[str] = []
     for book in sorted_books[1:]:
         if book.get("ignore_narrator_warning"):
             continue
         book_narrator = _get_primary_narrator(book.get("narrators"))
-        if book_narrator != primary_narrator:
+        bn_norm = book_narrator.strip().casefold() if isinstance(book_narrator, str) else None
+        if bn_norm != pn_norm:
             warnings.append(book.get("title", "Unknown"))
     return warnings
 

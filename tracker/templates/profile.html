@@ -56,6 +56,12 @@
             <label class="form-check-label" for="showNarratorWarnings">Show narrator warnings</label>
           </div>
         </div>
+        <div class="mb-2" id="hideDramContainer">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="hideDramatizedNarratorWarnings">
+            <label class="form-check-label" for="hideDramatizedNarratorWarnings">Hide narrator warnings for "Dramatized Adaptation"</label>
+          </div>
+        </div>
         <div class="mb-2">
           <label class="form-label">Latest releases to show</label>
           <input class="form-control form-control-sm" type="number" id="latestCount" min="1" max="24" value="4" />
@@ -105,6 +111,8 @@ async function loadProfile() {
   const libcountEl = document.getElementById('p-libcount'); if (libcountEl) libcountEl.textContent = p.library_count;
   const dateFormatEl = document.getElementById('dateFormat'); if (dateFormatEl) dateFormatEl.value = p.date_format || 'iso';
   const showWarningsEl = document.getElementById('showNarratorWarnings'); if (showWarningsEl) showWarningsEl.checked = p.show_narrator_warnings !== false;
+  const hideDramEl = document.getElementById('hideDramatizedNarratorWarnings'); if (hideDramEl) hideDramEl.checked = p.hide_narrator_warnings_for_dramatized_adaptations === true;
+  const hideDramContainer = document.getElementById('hideDramContainer'); if (hideDramContainer && showWarningsEl) { hideDramContainer.style.display = showWarningsEl.checked ? 'block' : 'none'; if (!showWarningsEl.checked && hideDramEl) { hideDramEl.disabled = true; hideDramEl.checked = false; } }
   const latestCountEl = document.getElementById('latestCount'); if (latestCountEl) latestCountEl.value = (p.latest_count || 4);
   // frontpage link removed from profile (navbar provides it); only set input if present
   const fp = p.frontpage_slug || p.username;
@@ -191,6 +199,22 @@ document.getElementById('pwdForm').addEventListener('submit', async (ev) => {
 });
 
 loadProfile();
+function updateHideDramVisibility() {
+  const showWarningsEl = document.getElementById('showNarratorWarnings');
+  const hideContainer = document.getElementById('hideDramContainer');
+  const hideDramEl = document.getElementById('hideDramatizedNarratorWarnings');
+  if (!hideContainer || !showWarningsEl) return;
+  if (showWarningsEl.checked) {
+    hideContainer.style.display = 'block';
+    if (hideDramEl) hideDramEl.disabled = false;
+  } else {
+    hideContainer.style.display = 'none';
+    if (hideDramEl) { hideDramEl.disabled = true; hideDramEl.checked = false; }
+  }
+}
+setTimeout(updateHideDramVisibility, 0);
+const showWarningsElGlobal = document.getElementById('showNarratorWarnings');
+if (showWarningsElGlobal) showWarningsElGlobal.addEventListener('change', updateHideDramVisibility);
 // loadApiKeys();  // DISABLED: API Keys feature
 
 document.getElementById('savePrefs').addEventListener('click', async () => {
@@ -201,6 +225,7 @@ document.getElementById('savePrefs').addEventListener('click', async () => {
   const prefsBody = {
     date_format: dateFormat,
     show_narrator_warnings: document.getElementById('showNarratorWarnings').checked,
+    hide_narrator_warnings_for_dramatized_adaptations: document.getElementById('hideDramatizedNarratorWarnings').checked,
     latest_count: Number(document.getElementById('latestCount').value) || 4,
   };
 

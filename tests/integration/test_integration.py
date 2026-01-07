@@ -211,6 +211,54 @@ class TestPageAccess:
         # We removed the Open frontpage link from the profile as the navbar provides it
         assert "Open frontpage" not in response.text
 
+    def test_frontpage_hides_dramatized_narrator_warning_when_user_pref_set(self, client):
+        """When the user has the hide-dramatized-pref enabled, frontpage should not show narrator icon for dramatized adaptations."""
+        from tracker.auth import get_password_hash
+        mock_users_collection = MagicMock()
+        def mock_find_user(query):
+            or_conditions = query.get("$or")
+            if or_conditions:
+                # frontpage slug lookup
+                return {"username": "admin", "frontpage_slug": "admin", "hide_narrator_warnings_for_dramatized_adaptations": True, "show_narrator_warnings": True, "date_format": "iso"}
+            username = query.get("username")
+            if username == "admin":
+                return {"username": "admin", "password_hash": get_password_hash("admin"), "role": "admin", "failed_attempts": 0, "lock_until": None}
+            return None
+        mock_users_collection.find_one.side_effect = mock_find_user
+        with patch('tracker.db.get_users_collection', return_value=mock_users_collection):
+            with patch('tracker.library.get_user_library') as mock_get_library:
+                # Create a series with two books: first narrator A, second has different narrator and 'Dramatized Adaptation' in the title
+                mock_series = type('Series', (), {
+                    'title': 'Test Series',
+                    'asin': 'S002',
+                    'url': 'https://example.com/series',
+                    'fetched_at': '2024-01-01T00:00:00Z',
+                    'books': [
+                        type('Book', (), {
+                            'title': 'Book 1',
+                            'release_date': '2024-01-01',
+                            'url': 'https://example.com/book1',
+                            'asin': 'B001',
+                            'narrators': ['Narrator A'],
+                            'runtime': 360
+                        })(),
+                        type('Book', (), {
+                            'title': 'Book 2 (Dramatized Adaptation)',
+                            'release_date': '2024-02-01',
+                            'url': 'https://example.com/book2',
+                            'asin': 'B002',
+                            'narrators': ['Narrator B'],
+                            'runtime': 300
+                        })(),
+                    ]
+                })()
+                mock_get_library.return_value = [mock_series]
+                response = client.get("/home/admin")
+                assert response.status_code == 200
+                # Title should be present but narrator icon should be hidden
+                assert 'Book 2' in response.text
+                assert 'bi bi-mic' not in response.text
+
     def test_profile_page_frontpage_edit_visible_when_enabled(self, client, auth_headers):
         """When the admin enables the setting, the profile should show the frontpage slug input."""
         with patch('tracker.settings.get_settings_collection') as mock_settings_col:
@@ -236,20 +284,29 @@ class TestPageAccess:
         assert isinstance(data["latest_count"], int)
         assert data["latest_count"] == 4
 
+    def test_profile_api_includes_hide_dramatized_setting_default(self, client, auth_headers):
+        """API profile should include the new hide-dramatized setting defaulting to False."""
+        resp = client.get("/config/api/profile", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "hide_narrator_warnings_for_dramatized_adaptations" in data
+        assert data["hide_narrator_warnings_for_dramatized_adaptations"] is False
+
     def test_update_profile_saves_latest_count(self, client, auth_headers):
         """Updating profile preferences should store latest_count on the user document."""
         mock_users_collection = MagicMock()
         mock_users_collection.find_one.return_value = {"username": "admin", "_id": "admin-id"}
         mock_users_collection.update_one.return_value = MagicMock(matched_count=1)
         with patch('tracker.db.get_users_collection', return_value=mock_users_collection), patch('tracker.api.get_users_collection', return_value=mock_users_collection):
-            payload = {"date_format": "iso", "show_narrator_warnings": True, "latest_count": 8}
+            payload = {"date_format": "iso", "show_narrator_warnings": True, "hide_narrator_warnings_for_dramatized_adaptations": True, "latest_count": 8}
             resp = client.post("/config/api/profile/preferences", json=payload, headers=auth_headers)
             assert resp.status_code == 200
             mock_users_collection.update_one.assert_called()
-            # Ensure latest_count was included in the update
+            # Ensure latest_count and hide flag were included in the update
             called_args = mock_users_collection.update_one.call_args[0]
             # called_args is (filter, update)
             assert called_args[1]["$set"].get("latest_count") == 8
+            assert called_args[1]["$set"].get("hide_narrator_warnings_for_dramatized_adaptations") is True
 
     def test_update_profile_latest_count_validation(self, client, auth_headers):
         """latest_count must be within the allowed range."""

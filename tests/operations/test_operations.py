@@ -267,7 +267,20 @@ class TestLibraryOperations:
             # Since the books have different narrators, warnings should now include Book 2 again
             assert "Book 2" in (doc.get("narrator_warnings") or [])
 
-    
+    def test_narrator_case_insensitive(self):
+        """Narrator comparisons should be case-insensitive."""
+        from tracker.library import compute_narrator_warnings
+        books = [
+            {"title": "Book 1", "asin": "B1", "narrators": ["Narrator A"]},
+            {"title": "Book 2", "asin": "B2", "narrators": ["narrator a"]},
+            {"title": "Book 3", "asin": "B3", "narrators": ["Narrator B"]},
+        ]
+        warnings = compute_narrator_warnings(books, None)
+        # Book 2 should not be flagged because narrator matches primary regardless of case
+        assert "Book 2" not in warnings
+        # Book 3 should be flagged
+        assert "Book 3" in warnings
+
     def test_remove_from_library(self, client, auth_headers):
         """Test removing a series from library."""
         with patch('tracker.db.get_user_library_collection') as mock_lib_col:
