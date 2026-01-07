@@ -602,6 +602,20 @@ def create_app() -> FastAPI:
         total_books = 0
         last_refresh_dt = None
 
+        # Pre-load all series data to avoid N+1 queries in _get_publication_dt
+        series_asins = [getattr(it, 'asin', None) for it in library if getattr(it, 'asin', None)]
+        series_cache: dict = {}
+        if series_asins:
+            try:
+                # Load series with books data for publication date lookups
+                series_docs = get_series_collection().find(
+                    {"_id": {"$in": series_asins}},
+                    {"books": 1, "publication_datetime": 1, "raw.publication_datetime": 1}
+                )
+                series_cache = {doc["_id"]: doc for doc in series_docs}
+            except Exception:
+                series_cache = {}
+
         for it in library:
             books = it.books if isinstance(it.books, list) else []
             visible = visible_books(books)
