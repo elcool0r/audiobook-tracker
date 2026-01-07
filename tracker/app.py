@@ -143,7 +143,270 @@ def create_app() -> FastAPI:
     app.mount(_p("/static"), StaticFiles(directory=str(BASE_DIR / "static")), name="static")
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="public_static")
 
-    # frontpage rendering moved to tracker.frontpage.render_frontpage_for_slug
+    def render_frontpage_for_slug(request: Request, slug: str):
+        if not slug:
+            return None
+        settings = load_settings()
+        from .db import get_users_collection
+        from .library import get_user_library
+        users_col = get_users_collection()
+        user_doc = users_col.find_one({"$or": [{"frontpage_slug": slug}, {"username": slug}]})
+        if not user_doc:
+            return None
+        username = user_doc.get("username")
+        date_format = user_doc.get("date_format", "de")
+        library = get_user_library(username)
+        # How many latest releases to show (user preference).
+        try:
+            num_latest = int(user_doc.get('latest_count') or 4)
+        except Exception:
+            num_latest = 4
+        num_latest = max(1, min(24, num_latest))
+        # How many latest releases to show (user preference).
+        try:
+            num_latest = int(user_doc.get('latest_count') or 4)
+        except Exception:
+            num_latest = 4
+        num_latest = max(1, min(24, num_latest))
+
+        from datetime import datetime, timezone
+
+
+        # NOTE: helper funcs moved to module-level for easier testing and series-lookup
+        # See module-level `_parse_iso_datetime` and `_get_publication_dt` functions
+        
+        # Local wrapper to call module helpers with a per-request series cache
+        series_cache: dict = {}
+        def _get_publication_dt_local(book):
+            return _get_publication_dt(book, series_asin=getattr(it, 'asin', None), series_cache=series_cache)
+
+        def _parse_date(s):
+            try:
+                return datetime.fromisoformat((s or "").split("T")[0]).replace(tzinfo=timezone.utc)
+            except Exception:
+                return None
+
+        def _format_dt(dt: datetime | None):
+            if not dt:
+                return "—"
+            def pad(n):
+                return str(n).zfill(2)
+            if date_format == "de":
+                return f"{pad(dt.day)}.{pad(dt.month)}.{dt.year} {pad(dt.hour)}:{pad(dt.minute)}"
+            if date_format == "us":
+                return f"{pad(dt.month)}/{pad(dt.day)}/{dt.year} {pad(dt.hour)}:{pad(dt.minute)}"
+            return f"{dt.date().isoformat()} {pad(dt.hour)}:{pad(dt.minute)}"
+
+        def _format_d(dt: datetime | None):
+            if not dt:
+                return "—"
+            def pad(n):
+                return str(n).zfill(2)
+            if date_format == "de":
+                return f"{pad(dt.day)}.{pad(dt.month)}.{dt.year}"
+            if date_format == "us":
+                return f"{pad(dt.month)}/{pad(dt.day)}/{dt.year}"
+            return dt.date().isoformat()
+
+        def _format_runtime(val) -> str | None:
+            try:
+                m = int(val or 0)
+            except Exception:
+                return None
+            if m <= 0:
+                return None
+            h = m // 60
+            mins = m % 60
+            return f"{h}h {mins}m" if h else f"{mins}m"
+
+        now = _dt.now(timezone.utc).replace(tzinfo=None)
+        upcoming_cards = []
+        latest_cards = []
+        series_rows = []
+        total_books = 0
+        last_refresh_dt = None
+
+        for it in library:
+            books = it.books if isinstance(it.books, list) else []
+            visible = visible_books(books)
+            total_books += len(visible)
+            if it.fetched_at:
+                dt = _parse_date(it.fetched_at)
+                if dt and (not last_refresh_dt or dt > last_refresh_dt):
+                    last_refresh_dt = dt
+            series_last_release = None
+            series_next_release = None
+            for b in visible:
+                rd = _get_publication_dt_local(b)
+                if not rd:
+                    continue
+                if rd <= now and (not series_last_release or rd > series_last_release):
+                    series_last_release = rd
+                if rd > now and (not series_next_release or rd < series_next_release):
+                    series_next_release = rd
+                book_url = getattr(b, "url", None)
+                if not book_url and getattr(b, "asin", None):
+                    book_url = f"https://www.audible.com/pd/{getattr(b, 'asin', '')}"
+                if rd > now:
+                    # format time-left as days or hours depending on remaining time
+                    time_left_str, hours_left, days_left = _format_time_left(rd, now)
+                    runtime_str = _format_runtime(getattr(b, "runtime", None))
+                    upcoming_cards.append({
+                        "title": getattr(b, "title", None) or it.title,
+                        "series": it.title,
+                        "narrators": getattr(b, "narrators", None) or "",
+                        "runtime": getattr(b, "runtime", None) or "",
+                        "runtime_str": runtime_str,
+                        "release_dt": rd,
+                        "release_dt_iso": rd.isoformat() + 'Z',
+                        "release_str": _format_d(rd),
+                        "time_left_str": time_left_str,
+                        "hours_left": hours_left,
+                        "days_left": days_left or 0,
+                        "image": getattr(b, "image", None),
+                        "url": book_url,
+                    })
+                else:
+                    days_ago = (now - rd).days
+                    runtime_str = _format_runtime(getattr(b, "runtime", None))
+                    latest_cards.append({
+                        "title": getattr(b, "title", None) or it.title,
+                        "series": it.title,
+                        "narrators": getattr(b, "narrators", None) or "",
+                        "runtime": getattr(b, "runtime", None) or "",
+                        "runtime_str": runtime_str,
+                        "release_dt_iso": rd.isoformat() + 'Z',
+                        "release_dt": rd,
+                        "release_str": _format_d(rd),
+                        "days_ago": days_ago,
+                        "image": getattr(b, "image", None),
+                        "url": book_url,
+                    })
+            narr_set = set()
+            runtime_mins = 0
+            for b in visible:
+                if getattr(b, "narrators", None):
+                    for n in str(getattr(b, "narrators", "")).split(","):
+                        n = n.strip()
+                        if n:
+                            narr_set.add(n)
+                try:
+                    runtime_mins += int(getattr(b, "runtime", None) or 0)
+                except Exception:
+                    pass
+            hours = runtime_mins // 60
+            mins = runtime_mins % 60
+            runtime_str = f"{hours}h {mins}m" if hours else f"{mins}m"
+            cover = None
+            for b in visible:
+                if getattr(b, "image", None):
+                    cover = getattr(b, "image", None)
+                    break
+            if not cover:
+                for b in books:
+                    if getattr(b, "image", None):
+                        cover = getattr(b, "image", None)
+                        break
+            last_release_str = _format_d(series_last_release)
+            last_release_ts = series_last_release.isoformat() if series_last_release else None
+            next_release_str = _format_d(series_next_release)
+            next_release_ts = series_next_release.isoformat() if series_next_release else None
+            series_rows.append({
+                "title": it.title,
+                "asin": it.asin,
+                "narrators": ", ".join(sorted(narr_set)),
+                "book_count": len(visible),
+                "runtime": runtime_str,
+                "cover": cover,
+                "last_release": last_release_str,
+                "last_release_ts": last_release_ts,
+                "next_release": next_release_str,
+                "next_release_ts": next_release_ts,
+                "duration_minutes": runtime_mins,
+                "url": it.url,
+            })
+
+        upcoming_cards.sort(key=lambda x: x["release_dt"])
+        latest_cards.sort(key=lambda x: x["release_dt"], reverse=True)
+        latest_cards = latest_cards[:num_latest]
+        series_rows.sort(key=lambda x: (x["title"] or ""))
+
+        series_asins = [row.get("asin") for row in series_rows if row.get("asin")]
+        narrator_warnings_map: dict[str, list] = {}
+        if series_asins:
+            try:
+                docs = get_series_collection().find({"_id": {"$in": series_asins}}, {"narrator_warnings": 1})
+                for doc in docs:
+                    if isinstance(doc, dict):
+                        asin_key = doc.get("_id")
+                        if asin_key:
+                            narrator_warnings_map[asin_key] = doc.get("narrator_warnings", []) or []
+            except Exception:
+                narrator_warnings_map = {}
+        for row in series_rows:
+            row["narrator_warnings"] = narrator_warnings_map.get(row.get("asin")) or []
+
+        # Attach per-card narrator warning flags for upcoming and latest lists
+        title_to_asin = {row.get("title"): row.get("asin") for row in series_rows if row.get("title")}
+
+        # Detect dramatized adaptations on frontpage cards (case-insensitive) so we can optionally hide warnings for them
+        import re
+        def _card_contains_dramatized(card):
+            for k in ("title", "series", "narrators"):
+                v = card.get(k)
+                if isinstance(v, str) and re.search(r"dramatized adaptation", v, re.IGNORECASE):
+                    return True
+            return False
+        dramatized_titles = set()
+        for card in upcoming_cards + latest_cards:
+            if _card_contains_dramatized(card):
+                dramatized_titles.add(card.get("title"))
+
+        hide_pref = bool(user_doc.get('hide_narrator_warnings_for_dramatized_adaptations', False))
+
+        for card in upcoming_cards:
+            series_asin = card.get("series_asin") or title_to_asin.get(card.get("series"))
+            card["series_asin"] = series_asin
+            base_flag = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
+            card["narrator_warning"] = base_flag and not (hide_pref and card.get("title") in dramatized_titles)
+        for card in latest_cards:
+            series_asin = card.get("series_asin") or title_to_asin.get(card.get("series"))
+            card["series_asin"] = series_asin
+            base_flag = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
+            card["narrator_warning"] = base_flag and not (hide_pref and card.get("title") in dramatized_titles)
+
+        # Also filter series-level narrator_warnings displayed on the frontpage tooltips
+        if hide_pref and dramatized_titles:
+            for row in series_rows:
+                row["narrator_warnings"] = [t for t in (row.get("narrator_warnings") or []) if t not in dramatized_titles]
+
+        stats = {
+            "series_count": len(library),
+            "books_count": total_books,
+            "last_refresh": _format_dt(last_refresh_dt),
+            "slug": user_doc.get("frontpage_slug") or username,
+            "username": username,
+        }
+
+        return templates.TemplateResponse(
+            "frontpage.html",
+            {
+                "request": request,
+                "settings": settings,
+                "base_path": "",
+                "public_nav": True,
+                "brand_title": "Audiobook Tracker",
+                "hide_nav": True,
+                "page_title": "Audiobook Tracker",
+                "main_class": "container-fluid px-3 px-sm-4",
+                "stats": stats,
+                "upcoming": upcoming_cards,
+                "latest": latest_cards,
+                "series": series_rows,
+                "version": __version__,
+                "show_narrator_warnings": user_doc.get("show_narrator_warnings", True),
+            },
+        )
 
     @app.get("/", response_class=HTMLResponse)
     async def public_root(request: Request):
@@ -257,10 +520,236 @@ def create_app() -> FastAPI:
 
     @app.get("/home/{slug}", response_class=HTMLResponse)
     async def user_home_page(request: Request, slug: str):
-        page = render_frontpage_for_slug(request, slug, templates)
-        if page:
-            return page
-        settings = settings_mod.load_settings()
+        # Fully server-rendered frontpage: Upcoming, Latest, and Series (no series view links)
+        from .db import get_users_collection
+        from .library import get_user_library
+        users_col = get_users_collection()
+        user_doc = users_col.find_one({"$or": [{"frontpage_slug": slug}, {"username": slug}]})
+        if not user_doc:
+            settings = load_settings()
+            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "User not found", "version": __version__}, status_code=404)
+        username = user_doc.get("username")
+        date_format = user_doc.get("date_format", "de")
+        library = get_user_library(username)
+        # How many latest releases to show (user preference).
+        try:
+            num_latest = int(user_doc.get('latest_count') or 4)
+        except Exception:
+            num_latest = 4
+        num_latest = max(1, min(24, num_latest))
+
+        from datetime import datetime, timezone
+
+        def _parse_date(s):
+            try:
+                return datetime.fromisoformat((s or "").split("T")[0]).replace(tzinfo=timezone.utc)
+            except Exception:
+                return None
+
+        def _format_dt(dt: datetime | None):
+            if not dt:
+                return "—"
+            def pad(n):
+                return str(n).zfill(2)
+            if date_format == "de":
+                return f"{pad(dt.day)}.{pad(dt.month)}.{dt.year} {pad(dt.hour)}:{pad(dt.minute)}"
+            if date_format == "us":
+                return f"{pad(dt.month)}/{pad(dt.day)}/{dt.year} {pad(dt.hour)}:{pad(dt.minute)}"
+            return f"{dt.date().isoformat()} {pad(dt.hour)}:{pad(dt.minute)}"
+
+        def _format_d(dt: datetime | None):
+            if not dt:
+                return "—"
+            def pad(n):
+                return str(n).zfill(2)
+            if date_format == "de":
+                return f"{pad(dt.day)}.{pad(dt.month)}.{dt.year}"
+            if date_format == "us":
+                return f"{pad(dt.month)}/{pad(dt.day)}/{dt.year}"
+            return dt.date().isoformat()
+
+        def _format_runtime(val) -> str | None:
+            try:
+                m = int(val or 0)
+            except Exception:
+                return None
+            if m <= 0:
+                return None
+            h = m // 60
+            mins = m % 60
+            return f"{h}h {mins}m" if h else f"{mins}m"
+
+        now = _dt.now(timezone.utc).replace(tzinfo=None)
+        upcoming_cards = []
+        latest_cards = []
+        series_rows = []
+        total_books = 0
+        last_refresh_dt = None
+
+        for it in library:
+            books = it.books if isinstance(it.books, list) else []
+            visible = visible_books(books)
+            total_books += len(visible)
+            if it.fetched_at:
+                dt = _parse_date(it.fetched_at)
+                if dt and (not last_refresh_dt or dt > last_refresh_dt):
+                    last_refresh_dt = dt
+            series_last_release = None
+            series_next_release = None
+            series_cache = {}
+            def _get_publication_dt_local(book):
+                return _get_publication_dt(book, series_asin=getattr(it, 'asin', None), series_cache=series_cache)
+            for b in visible:
+                rd = _get_publication_dt_local(b)
+                if not rd:
+                    continue
+                if rd <= now and (not series_last_release or rd > series_last_release):
+                    series_last_release = rd
+                if rd > now and (not series_next_release or rd < series_next_release):
+                    series_next_release = rd
+                book_url = getattr(b, "url", None)
+                if not book_url and getattr(b, "asin", None):
+                    book_url = f"https://www.audible.com/pd/{getattr(b, 'asin', '')}"
+                if rd > now:
+                    days = (rd - now).days + (1 if (rd - now).seconds > 0 else 0)
+                    runtime_str = _format_runtime(getattr(b, "runtime", None))
+                    upcoming_cards.append({
+                        "title": getattr(b, "title", None) or it.title,
+                        "series": it.title,
+                        "narrators": getattr(b, "narrators", None) or "",
+                        "runtime": getattr(b, "runtime", None) or "",
+                        "runtime_str": runtime_str,
+                        "release_dt_iso": rd.isoformat() + 'Z',
+                        "release_dt": rd,
+                        "release_str": _format_d(rd),
+                        "days_left": days,
+                        "image": getattr(b, "image", None),
+                        "url": book_url,
+                    })
+                else:
+                    days_ago = (now - rd).days
+                    runtime_str = _format_runtime(getattr(b, "runtime", None))
+                    latest_cards.append({
+                        "title": getattr(b, "title", None) or it.title,
+                        "series": it.title,
+                        "narrators": getattr(b, "narrators", None) or "",
+                        "release_dt_iso": rd.isoformat() + 'Z',
+                        "runtime": getattr(b, "runtime", None) or "",
+                        "runtime_str": runtime_str,
+                        "release_dt": rd,
+                        "release_str": _format_d(rd),
+                        "days_ago": days_ago,
+                        "image": getattr(b, "image", None),
+                        "url": book_url,
+                    })
+            narr_set = set()
+            runtime_mins = 0
+            for b in visible:
+                if getattr(b, "narrators", None):
+                    for n in str(getattr(b, "narrators", "")).split(","):
+                        n = n.strip()
+                        if n:
+                            narr_set.add(n)
+                try:
+                    runtime_mins += int(getattr(b, "runtime", None) or 0)
+                except Exception:
+                    pass
+            hours = runtime_mins // 60
+            mins = runtime_mins % 60
+            runtime_str = f"{hours}h {mins}m" if hours else f"{mins}m"
+            cover = None
+            for b in visible:
+                if getattr(b, "image", None):
+                    cover = getattr(b, "image", None)
+                    break
+            if not cover:
+                for b in books:
+                    if getattr(b, "image", None):
+                        cover = getattr(b, "image", None)
+                        break
+            last_release_str = _format_d(series_last_release)
+            last_release_ts = series_last_release.isoformat() if series_last_release else None
+            next_release_str = _format_d(series_next_release)
+            next_release_ts = series_next_release.isoformat() if series_next_release else None
+            series_rows.append({
+                "title": it.title,
+                "asin": it.asin,
+                "narrators": ", ".join(sorted(narr_set)),
+                "book_count": len(visible),
+                "runtime": runtime_str,
+                "cover": cover,
+                "last_release": last_release_str,
+                "last_release_ts": last_release_ts,
+                "next_release": next_release_str,
+                "next_release_ts": next_release_ts,
+                "duration_minutes": runtime_mins,
+                "url": it.url,
+            })
+
+        upcoming_cards.sort(key=lambda x: x["release_dt"])
+        latest_cards.sort(key=lambda x: x["release_dt"], reverse=True)
+        latest_cards = latest_cards[:num_latest]
+        series_rows.sort(key=lambda x: (x["title"] or ""))
+
+        # Load narrator warnings for series and attach per-card flags
+        series_asins = [row.get("asin") for row in series_rows if row.get("asin")]
+        narrator_warnings_map: dict[str, list] = {}
+        if series_asins:
+            try:
+                docs = get_series_collection().find({"_id": {"$in": series_asins}}, {"narrator_warnings": 1})
+                for doc in docs:
+                    if isinstance(doc, dict):
+                        asin_key = doc.get("_id")
+                        if asin_key:
+                            narrator_warnings_map[asin_key] = doc.get("narrator_warnings", []) or []
+            except Exception:
+                narrator_warnings_map = {}
+        for row in series_rows:
+            row["narrator_warnings"] = narrator_warnings_map.get(row.get("asin")) or []
+
+        title_to_asin = {row.get("title"): row.get("asin") for row in series_rows if row.get("title")}
+
+        # Detect dramatized adaptations on frontpage cards (case-insensitive) so we can optionally hide warnings for them
+        import re
+        def _card_contains_dramatized(card):
+            for k in ("title", "series", "narrators"):
+                v = card.get(k)
+                if isinstance(v, str) and re.search(r"dramatized adaptation", v, re.IGNORECASE):
+                    return True
+            return False
+        dramatized_titles = set()
+        for card in upcoming_cards + latest_cards:
+            if _card_contains_dramatized(card):
+                dramatized_titles.add(card.get("title"))
+
+        hide_pref = bool(user_doc.get('hide_narrator_warnings_for_dramatized_adaptations', False))
+
+        for card in upcoming_cards:
+            series_asin = card.get("series_asin") or title_to_asin.get(card.get("series"))
+            card["series_asin"] = series_asin
+            base_flag = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
+            card["narrator_warning"] = base_flag and not (hide_pref and card.get("title") in dramatized_titles)
+        for card in latest_cards:
+            series_asin = card.get("series_asin") or title_to_asin.get(card.get("series"))
+            card["series_asin"] = series_asin
+            base_flag = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
+            card["narrator_warning"] = base_flag and not (hide_pref and card.get("title") in dramatized_titles)
+
+        # Also filter series-level narrator_warnings displayed on the frontpage tooltips
+        if hide_pref and dramatized_titles:
+            for row in series_rows:
+                row["narrator_warnings"] = [t for t in (row.get("narrator_warnings") or []) if t not in dramatized_titles]
+
+        stats = {
+            "series_count": len(library),
+            "books_count": total_books,
+            "last_refresh": _format_dt(last_refresh_dt),
+            "slug": user_doc.get("frontpage_slug") or username,
+            "username": username,
+        }
+
+        settings = load_settings()
+
         return templates.TemplateResponse(
             "login.html",
             {"request": request, "settings": settings, "error": "User not found", "version": __version__},
