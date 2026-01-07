@@ -25,6 +25,7 @@ class LibraryBook(BaseModel):
     runtime: Optional[str | int] = None
     narrators: Optional[str] = None
     image: Optional[str] = None
+    image_url: Optional[str] = None
     raw: Optional[Dict[str, Any]] = None
     hidden: bool = False
 
@@ -659,6 +660,7 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
         primary_series_asin = parent_asin or series_asin
         book["series"] = [{"asin": primary_series_asin, "sequence": seq}] if primary_series_asin else []
         # fetch image data and store
+        book["image_url"] = book["image"]  # Store original URL for notifications
         try:
             img_resp = requests.get(book["image"], timeout=10, proxies=proxies)
             if img_resp.ok:

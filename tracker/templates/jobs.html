@@ -4,7 +4,7 @@
 <div class="d-flex align-items-center mb-3">
   <button class="btn btn-sm btn-outline-primary me-2" id="refresh">Refresh</button>
   <button class="btn btn-sm btn-outline-success me-2" id="testJob">Enqueue test job</button>
-  <button class="btn btn-sm btn-outline-danger me-2" id="clearJobs">Clear all jobs</button>
+  <button class="btn btn-sm btn-outline-danger me-2 two-step-confirm" id="clearJobs">Clear all jobs</button>
   <span class="ms-3 small text-muted">Auto-refreshing every 3 seconds</span>
 </div>
 <div id="jobsTable"></div>
@@ -131,8 +131,23 @@ document.getElementById('testJob').addEventListener('click', async () => {
 });
 
 document.getElementById('clearJobs').addEventListener('click', async () => {
-  if (!confirm('Are you sure you want to clear all job history? This cannot be undone.')) return;
   const btn = document.getElementById('clearJobs');
+  // Two-step confirm without browser alert
+  if (btn.dataset.confirmed !== 'true') {
+    btn.dataset.confirmed = 'true';
+    btn.textContent = 'Confirm';
+    btn.classList.remove('btn-outline-danger');
+    btn.classList.add('btn-danger');
+    setTimeout(() => {
+      if (btn.dataset.confirmed === 'true') {
+        btn.dataset.confirmed = '';
+        btn.textContent = 'Clear all jobs';
+        btn.classList.add('btn-outline-danger');
+        btn.classList.remove('btn-danger');
+      }
+    }, 3000);
+    return;
+  }
   btn.disabled = true;
   btn.textContent = 'Clearing...';
   await fetch(apiPath('/api/jobs/clear'), { method: 'POST' });

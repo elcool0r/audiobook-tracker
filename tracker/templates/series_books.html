@@ -629,10 +629,23 @@ async function loadSeries() {
         devRow.appendChild(pubSetBtn);
 
         const deleteBtn = document.createElement('button');
-        deleteBtn.className = 'btn btn-sm btn-outline-danger';
+        deleteBtn.className = 'btn btn-sm btn-outline-danger two-step-confirm';
         deleteBtn.textContent = 'Delete book';
         deleteBtn.onclick = async () => {
-          if (!confirm('Delete this book from the cached list? Refreshing will re-fetch it from the source.')) {
+          // Two-step confirm without browser alert
+          if (deleteBtn.dataset.confirmed !== 'true') {
+            deleteBtn.dataset.confirmed = 'true';
+            deleteBtn.textContent = 'Confirm';
+            deleteBtn.classList.remove('btn-outline-danger');
+            deleteBtn.classList.add('btn-danger');
+            setTimeout(() => {
+              if (deleteBtn.dataset.confirmed === 'true') {
+                deleteBtn.dataset.confirmed = '';
+                deleteBtn.textContent = 'Delete book';
+                deleteBtn.classList.add('btn-outline-danger');
+                deleteBtn.classList.remove('btn-danger');
+              }
+            }, 3000);
             return;
           }
           deleteBtn.disabled = true;
