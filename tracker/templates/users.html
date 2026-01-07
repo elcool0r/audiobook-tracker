@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
+<div class="container-fluid px-3 px-sm-4">
 <h1>User Management</h1>
 <div class="row">
   <div class="col-md-6">
@@ -223,5 +224,7 @@ function showPasswordToast(username, password) {
   container.prepend(toast);
   setTimeout(() => { try { toast.remove(); } catch(e) {} }, 20000);
 }
+
 </script>
+</div>
 {% endblock %}

@@ -597,6 +597,11 @@ def create_app() -> FastAPI:
         settings = load_settings()
         return templates.TemplateResponse("settings.html", {"request": request, "settings": settings, "user": user, "version": __version__})
 
+    # Chrome DevTools and some extensions probe this path; return 204 to silence 404 noise
+    @app.get("/.well-known/appspecific/com.chrome.devtools.json")
+    async def _chrome_devtools_probe():
+        return Response(status_code=204)
+
     @app.get(_p("/library"), response_class=HTMLResponse)
     async def library_page(request: Request, user=Depends(get_current_user)):
         settings = load_settings()

@@ -28,7 +28,7 @@
       </div>
     </div>
   </div>
-  <div class="col-md-6">
+  <div class="col-lg-6 col-md-6">
     <div class="card mb-3">
       <div class="card-body">
         <h5 class="card-title">Preferences</h5>
@@ -73,29 +73,32 @@
       </div>
     </div>
     <!-- API Keys feature hidden for now -->
-  </div>  <!-- Audiobookshelf Import feature hidden for now -->
+  </div>
+  <div class="col-lg-6 col-md-6">
     <div class="card mb-3">
       <div class="card-body">
         <h5 class="card-title">Notifications</h5>
-        <div class="form-check form-switch mb-3">
+        <div class="form-check form-switch mb-2">
           <input class="form-check-input" type="checkbox" id="notifyEnabled" aria-checked="false">
           <label class="form-check-label" for="notifyEnabled">Enable Notifications</label>
         </div>
-        <div class="mb-3">
+        <div class="mb-2">
           <label class="form-label">Apprise URLs</label>
-          <textarea class="form-control" id="notifyUrls" rows="4" placeholder="discord://token/...&#10;telegram://bot_token/chat_id&#10;email://user@example.com"></textarea>
+          <textarea class="form-control form-control-sm" id="notifyUrls" rows="3" placeholder="discord://token/...&#10;telegram://bot_token/chat_id&#10;email://user@example.com"></textarea>
           <small class="text-muted d-block mt-1">One URL per line. <a href="https://github.com/caronc/apprise/wiki" target="_blank">Apprise formats</a></small>
         </div>
-        <div class="form-check form-switch mb-2">
+        <div class="form-check form-switch mb-1">
           <input class="form-check-input" type="checkbox" id="notifyNewFound" aria-checked="false">
           <label class="form-check-label" for="notifyNewFound">Notify when a new audiobook is found</label>
         </div>
-        <div class="form-check form-switch mb-3">
+        <div class="form-check form-switch mb-2">
           <input class="form-check-input" type="checkbox" id="notifyRelease" aria-checked="false">
           <label class="form-check-label" for="notifyRelease">Notify when an audiobook is released</label>
         </div>
-        <button class="btn btn-sm btn-primary" id="notifySaveBtn">Save Settings</button>
-        <button class="btn btn-sm btn-outline-secondary" id="notifyTestBtn">Send Test</button>
+        <div class="d-flex gap-1">
+          <button class="btn btn-sm btn-primary" id="notifySaveBtn">Save</button>
+          <button class="btn btn-sm btn-outline-secondary" id="notifyTestBtn">Test</button>
+        </div>
         <div class="alert alert-success mt-2" id="notifyOk" style="display:none;">Settings saved</div>
         <div class="alert alert-danger mt-2" id="notifyErr" style="display:none;"></div>
       </div>

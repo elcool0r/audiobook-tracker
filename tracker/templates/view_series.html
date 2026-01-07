@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
-<div class="container mt-4">
+<div class="container-fluid px-3 px-sm-4">
   <h1 class="text-center mb-4" id="seriesTitle">Series</h1>
   <div class="d-flex justify-content-end mb-3">
     <div class="btn-group" role="group" aria-label="Sort controls">
@@ -9,7 +9,7 @@
     </div>
   </div>
   <div class="row row-cols-1 row-cols-md-3 g-4" id="booksGrid"></div>
-</div>
+  </div>
 <script>
   const asin = "{{ asin }}";
   let books = [];
@@ -101,4 +101,5 @@
 
   loadSeries();
 </script>
+{% endblock %}
 {% endblock %}

@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block content %}
 <h1>Settings</h1>
+<div class="container-fluid px-3 px-sm-4">
 {% if user.role != 'admin' %}
 <div class="alert alert-warning">Only admin can update settings.</div>
 {% endif %}
@@ -154,6 +155,7 @@
   <button class="btn btn-primary">Save</button>
 </form>
 <div id="saved" style="display:none" class="alert alert-success mt-3">Saved</div>
+  </div>
 <script>
 let currentSettings = null;
 function syncProxyFields() {
@@ -184,6 +186,10 @@ async function loadFrontpageSlugOptions() {
       option.textContent = u.username || slug;
       select.appendChild(option);
     });
+    // Set the current value after options are loaded
+    if (currentSettings && currentSettings.default_frontpage_slug) {
+      select.value = currentSettings.default_frontpage_slug;
+    }
   } catch (err) {
     console.error('Failed to load landing slug options', err);
   }
@@ -238,8 +244,9 @@ async function loadSettings() {
   }
 }
 
-loadSettings();
-loadFrontpageSlugOptions();
+loadSettings().then(() => {
+  loadFrontpageSlugOptions();
+});
 
 const form = document.getElementById('settingsForm');
 form.addEventListener('submit', async (ev) => {

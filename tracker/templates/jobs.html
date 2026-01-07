@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block content %}
 <h1>Jobs (Admin)</h1>
+<div class="container-fluid px-3 px-sm-4">
 <div class="d-flex align-items-center mb-3">
   <button class="btn btn-sm btn-outline-primary me-2" id="refresh">Refresh</button>
   <button class="btn btn-sm btn-outline-success me-2" id="testJob">Enqueue test job</button>
@@ -161,4 +162,5 @@ autoRefreshInterval = setInterval(loadJobs, 3000);
 
 loadJobs();
 </script>
+ </div>
 {% endblock %}

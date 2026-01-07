@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
+<div class="container-fluid px-3 px-sm-4">
 <h1>My Library</h1>
 {% set search_enabled = user.role == 'admin' or settings.allow_non_admin_series_search %}
 <div class="row">
@@ -938,4 +939,5 @@ document.getElementById('knownSeriesCollapse').addEventListener('hidden.bs.colla
   if (header) header.classList.add('collapsed');
 });
 </script>
+</div>
 {% endblock %}

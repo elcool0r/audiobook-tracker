@@ -25,7 +25,11 @@
       <div class="container-fluid">
         <a class="navbar-brand" href="{{ (base_path ~ '/library') if not public_nav else '#' }}">{{ brand_title or 'Audiobook Tracker' }}</a>
         <span class="navbar-text small text-muted ms-2">{{ version }}</span>
-        <div class="collapse navbar-collapse">
+        <!-- Navbar toggler for mobile -->
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNavbar" aria-controls="mainNavbar" aria-expanded="false" aria-label="Toggle navigation">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="mainNavbar">
           <ul class="navbar-nav ms-auto align-items-center">
             {% if not public_nav %}
               {% if user %}

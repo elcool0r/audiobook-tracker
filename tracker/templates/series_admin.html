@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
+<div class="container-fluid px-3 px-sm-4">
 <h1 id="seriesAdminTitle">Series</h1>
 {% if settings.developer_mode and user.role == 'admin' %}
 <div class="alert alert-warning small">Developer mode is active — duplication controls are available in the list.</div>
@@ -462,5 +463,7 @@ pageSizeSelect.addEventListener('change', () => {
 });
 
 loadSeries();
+
 </script>
+</div>
 {% endblock %}
