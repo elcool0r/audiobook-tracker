@@ -1079,6 +1079,7 @@ class ProfileUpdateRequest(BaseModel):
     date_format: str
     show_narrator_warnings: bool = True
     latest_count: int = 4  # how many latest releases to show (1-24)
+    hide_narrator_warnings_for_dramatized_adaptations: bool = False
 
 
 class ApiKeyCreateRequest(BaseModel):
@@ -1594,6 +1595,7 @@ async def api_profile(user=Depends(get_current_user)):
         "date_format": user.get("date_format", "iso"),
         "frontpage_slug": user.get("frontpage_slug") or user.get("username"),
         "show_narrator_warnings": user.get("show_narrator_warnings", True),
+        "hide_narrator_warnings_for_dramatized_adaptations": user.get("hide_narrator_warnings_for_dramatized_adaptations", False),
         "latest_count": int(user.get("latest_count") or 4),
     }
 
@@ -1624,8 +1626,8 @@ async def api_update_profile_settings(payload: ProfileUpdateRequest, user=Depend
     if latest_count < 1 or latest_count > 24:
         raise HTTPException(status_code=400, detail="latest_count must be between 1 and 24")
     col = get_users_collection()
-    col.update_one({"_id": user["_id"]}, {"$set": {"date_format": payload.date_format, "show_narrator_warnings": payload.show_narrator_warnings, "latest_count": latest_count}})
-    return {"status": "ok", "date_format": payload.date_format, "show_narrator_warnings": payload.show_narrator_warnings, "latest_count": latest_count}
+    col.update_one({"_id": user["_id"]}, {"$set": {"date_format": payload.date_format, "show_narrator_warnings": payload.show_narrator_warnings, "hide_narrator_warnings_for_dramatized_adaptations": payload.hide_narrator_warnings_for_dramatized_adaptations, "latest_count": latest_count}})
+    return {"status": "ok", "date_format": payload.date_format, "show_narrator_warnings": payload.show_narrator_warnings, "hide_narrator_warnings_for_dramatized_adaptations": payload.hide_narrator_warnings_for_dramatized_adaptations, "latest_count": latest_count}
 
 
 @api_router.post("/profile/frontpage")
