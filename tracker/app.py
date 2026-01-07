@@ -261,13 +261,36 @@ def create_app() -> FastAPI:
         from datetime import datetime, timezone
 
 
-        # NOTE: helper funcs moved to module-level for easier testing and series-lookup
-        # See module-level `_parse_iso_datetime` and `_get_publication_dt` functions
-        
-        # Local wrapper to call module helpers with a per-request series cache
+        # Pre-load all series data to avoid N+1 queries in _get_publication_dt
+        series_asins = [getattr(it, 'asin', None) for it in library if getattr(it, 'asin', None)]
         series_cache: dict = {}
-        def _get_publication_dt_local(book):
-            return _get_publication_dt(book, series_asin=getattr(it, 'asin', None), series_cache=series_cache)
+        if series_asins:
+            try:
+                # Load series with books data for publication date lookups
+                series_docs = get_series_collection().find(
+                    {"_id": {"$in": series_asins}},
+                    {"books": 1, "publication_datetime": 1, "raw.publication_datetime": 1}
+                )
+                series_cache = {doc["_id"]: doc for doc in series_docs}
+            except Exception:
+                series_cache = {}
+
+        # Pre-load narrator warnings for all series
+        narrator_warnings_map: dict[str, list] = {}
+        if series_asins:
+            try:
+                # Use projection to only load necessary fields
+                docs = get_series_collection().find(
+                    {"_id": {"$in": series_asins}}, 
+                    {"narrator_warnings": 1}
+                )
+                narrator_warnings_map = {
+                    doc.get("_id"): doc.get("narrator_warnings", []) or []
+                    for doc in docs
+                    if isinstance(doc, dict)
+                }
+            except Exception:
+                narrator_warnings_map = {}
 
         def _parse_date(s):
             try:
@@ -420,18 +443,7 @@ def create_app() -> FastAPI:
         latest_cards = latest_cards[:num_latest]
         series_rows.sort(key=lambda x: (x["title"] or ""))
 
-        series_asins = [row.get("asin") for row in series_rows if row.get("asin")]
-        narrator_warnings_map: dict[str, list] = {}
-        if series_asins:
-            try:
-                docs = get_series_collection().find({"_id": {"$in": series_asins}}, {"narrator_warnings": 1})
-                for doc in docs:
-                    if isinstance(doc, dict):
-                        asin_key = doc.get("_id")
-                        if asin_key:
-                            narrator_warnings_map[asin_key] = doc.get("narrator_warnings", []) or []
-            except Exception:
-                narrator_warnings_map = {}
+        # Narrator warnings already pre-loaded above
         for row in series_rows:
             row["narrator_warnings"] = narrator_warnings_map.get(row.get("asin")) or []
 

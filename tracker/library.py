@@ -714,10 +714,21 @@ def ensure_indexes():
     # Series indexes
     series_col.create_index("title")
     series_col.create_index("next_refresh_at")
+    # Index for frontpage narrator warnings query
+    series_col.create_index("narrator_warnings")
+    # Compound index for series lookups with publication data
+    series_col.create_index([("books.asin", 1), ("books.publication_datetime", 1)])
+    series_col.create_index([("books.raw.asin", 1), ("books.raw.publication_datetime", 1)])
     
     # Library indexes
     lib_col.create_index("username")
     lib_col.create_index("series_asin")
+    # Compound index for user library queries - most important for frontpage performance
+    lib_col.create_index([("username", 1), ("series_asin", 1)])
+    
+    # Users indexes
+    users_col.create_index([("username", 1)], unique=True)
+    users_col.create_index([("frontpage_slug", 1)], unique=True, sparse=True)
     lib_col.create_index([("username", ASCENDING), ("series_asin", ASCENDING)])
     
     # Users indexes
