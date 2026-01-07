@@ -10,12 +10,15 @@
     <input class="form-control" name="default_frontpage_slug" list="frontpageSlugList" value="{{ settings.default_frontpage_slug or '' }}" placeholder="username or frontpage slug" />
     <datalist id="frontpageSlugList"></datalist>
     <div class="form-text">Visitors that are not signed in will be redirected to /home/&lt;slug&gt; when / is opened. Leave empty to keep showing the login screen.</div>
+    {% if settings.developer_mode %}
     <div class="form-check form-switch mt-2">
       <input class="form-check-input" type="checkbox" name="users_can_edit_frontpage_slug" id="usersCanEditFrontpageSlug" {% if settings.users_can_edit_frontpage_slug %}checked{% endif %} />
       <label class="form-check-label" for="usersCanEditFrontpageSlug">Users can edit Frontpage slug</label>
       <div class="form-text">When enabled, users can change their public page slug from their profile.</div>
     </div>
+    {% endif %}
   </div>
+{% if settings.developer_mode %}
   <div class="mb-3">
     <label class="form-label">API Request Rate limit(requests per second)</label>
     <input class="form-control" name="rate_rps" value="{{ settings.rate_rps }}" />
@@ -25,6 +28,7 @@
     <input class="form-control" name="max_job_history" type="number" value="{{ settings.max_job_history }}" />
     <div class="form-text">Maximum number of jobs to keep in history. Older jobs will be automatically pruned.</div>
   </div>
+{% endif %}
   
   <div class="card mb-3">
     <div class="card-header">API Settings</div>
@@ -43,11 +47,13 @@
         <label class="form-check-label" for="skipKnownSeriesSearchToggle">Skip series search when the title is already known</label>
         <div class="form-text">When enabled, searching for an exact known title returns a shortcut response instead of querying Audible.</div>
       </div>
+{% if settings.developer_mode %}
       <div class="form-check form-switch">
         <input class="form-check-input" type="checkbox" name="debug_logging" id="debugLoggingToggle" {% if settings.debug_logging %}checked{% endif %} />
         <label class="form-check-label" for="debugLoggingToggle">Enable debug logging</label>
         <div class="form-text">Enable detailed logging for troubleshooting. Requires app restart to take effect.</div>
       </div>
+{% endif %}
     </div>
   </div>
 
@@ -123,6 +129,7 @@
     </div>
   </div>
 
+{% if settings.developer_mode %}
   <div class="card mb-3">
     <div class="card-header">Database Maintenance</div>
     <div class="card-body">
@@ -136,6 +143,7 @@
       <div id="dumpRestoreResult" class="mt-2" style="display:none"></div>
     </div>
   </div>
+{% endif %}
   
   <button class="btn btn-primary">Save</button>
 </form>
@@ -177,21 +185,47 @@ async function loadSettings() {
   const r = await fetch(apiPath('/api/settings'));
   if (r.ok) {
     currentSettings = await r.json();
-    document.querySelector('[name=default_frontpage_slug]').value = currentSettings.default_frontpage_slug || '';
-    document.querySelector('[name=rate_rps]').value = currentSettings.rate_rps;
-    document.querySelector('[name=max_job_history]').value = currentSettings.max_job_history || 100;
-    document.querySelector('[name=user_agent]').value = currentSettings.user_agent || '';
-    document.querySelector('[name=proxy_url]').value = currentSettings.proxy_url || '';
-    document.querySelector('[name=proxy_username]').value = currentSettings.proxy_username || '';
-    document.querySelector('[name=proxy_password]').value = currentSettings.proxy_password || '';
+    const defaultFp = document.querySelector('[name=default_frontpage_slug]');
+    if (defaultFp) defaultFp.value = currentSettings.default_frontpage_slug || '';
+
+    const rateEl = document.querySelector('[name=rate_rps]');
+    if (rateEl) rateEl.value = currentSettings.rate_rps;
+
+    const maxJobEl = document.querySelector('[name=max_job_history]');
+    if (maxJobEl) maxJobEl.value = currentSettings.max_job_history || 100;
+
+    const userAgentEl = document.querySelector('[name=user_agent]');
+    if (userAgentEl) userAgentEl.value = currentSettings.user_agent || '';
+
+    const proxyUrlEl = document.querySelector('[name=proxy_url]');
+    if (proxyUrlEl) proxyUrlEl.value = currentSettings.proxy_url || '';
+
+    const proxyUserEl = document.querySelector('[name=proxy_username]');
+    if (proxyUserEl) proxyUserEl.value = currentSettings.proxy_username || '';
+
+    const proxyPassEl = document.querySelector('[name=proxy_password]');
+    if (proxyPassEl) proxyPassEl.value = currentSettings.proxy_password || '';
+
     // proxy_enabled: default OFF unless explicitly true
-    document.querySelector('[name=proxy_enabled]').checked = !!currentSettings.proxy_enabled;
-    document.querySelector('[name=auto_refresh_enabled]').checked = currentSettings.auto_refresh_enabled || false;
-    document.querySelector('[name=allow_non_admin_series_search]').checked = currentSettings.allow_non_admin_series_search || false;
+    const proxyEnabledEl = document.querySelector('[name=proxy_enabled]');
+    if (proxyEnabledEl) proxyEnabledEl.checked = !!currentSettings.proxy_enabled;
+
+    const autoRefreshEl = document.querySelector('[name=auto_refresh_enabled]');
+    if (autoRefreshEl) autoRefreshEl.checked = currentSettings.auto_refresh_enabled || false;
+
+    const allowSeriesEl = document.querySelector('[name=allow_non_admin_series_search]');
+    if (allowSeriesEl) allowSeriesEl.checked = currentSettings.allow_non_admin_series_search || false;
+
     // skip_known_series_search: default ON unless explicitly false
-    document.querySelector('[name=skip_known_series_search]').checked = currentSettings.skip_known_series_search !== false;
-    document.querySelector('[name=developer_mode]').checked = !!currentSettings.developer_mode;
-    document.querySelector('[name=users_can_edit_frontpage_slug]').checked = !!currentSettings.users_can_edit_frontpage_slug;
+    const skipKnownEl = document.querySelector('[name=skip_known_series_search]');
+    if (skipKnownEl) skipKnownEl.checked = currentSettings.skip_known_series_search !== false;
+
+    const devModeEl = document.querySelector('[name=developer_mode]');
+    if (devModeEl) devModeEl.checked = !!currentSettings.developer_mode;
+
+    const usersCanEditEl = document.querySelector('[name=users_can_edit_frontpage_slug]');
+    if (usersCanEditEl) usersCanEditEl.checked = !!currentSettings.users_can_edit_frontpage_slug;
+
     syncProxyFields();
   }
 }
@@ -203,30 +237,34 @@ const form = document.getElementById('settingsForm');
 form.addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const data = {
-    default_frontpage_slug: form.default_frontpage_slug.value || null,
-    rate_rps: parseFloat(form.rate_rps.value) || 2.0,
-    max_job_history: parseInt(form.max_job_history.value,10) || 100,
-    auto_refresh_enabled: form.auto_refresh_enabled.checked || false,
+    default_frontpage_slug: form.default_frontpage_slug ? (form.default_frontpage_slug.value || null) : (currentSettings && currentSettings.default_frontpage_slug) || null,
+    rate_rps: form.rate_rps ? (parseFloat(form.rate_rps.value) || currentSettings.rate_rps || 2.0) : (currentSettings && currentSettings.rate_rps) || 2.0,
+    max_job_history: form.max_job_history ? (parseInt(form.max_job_history.value,10) || currentSettings.max_job_history || 100) : (currentSettings && currentSettings.max_job_history) || 100,
+    auto_refresh_enabled: form.auto_refresh_enabled ? form.auto_refresh_enabled.checked || false : (currentSettings && currentSettings.auto_refresh_enabled) || false,
     manual_refresh_interval_minutes: (form.manual_refresh_interval_minutes ? parseInt(form.manual_refresh_interval_minutes.value,10) : (currentSettings && currentSettings.manual_refresh_interval_minutes)) || 10,
     response_groups: currentSettings && currentSettings.response_groups || null,
-    user_agent: form.user_agent.value || null,
-    allow_non_admin_series_search: form.allow_non_admin_series_search.checked || false,
-    skip_known_series_search: form.skip_known_series_search.checked || false,
-    debug_logging: form.debug_logging.checked || false,
-    developer_mode: form.developer_mode.checked || false,
-    proxy_enabled: form.proxy_enabled.checked || false,
-    proxy_url: form.proxy_url.value || null,
-    proxy_username: form.proxy_username.value || null,
-    proxy_password: form.proxy_password.value || null,
+    user_agent: form.user_agent ? form.user_agent.value || null : (currentSettings && currentSettings.user_agent) || null,
+    allow_non_admin_series_search: form.allow_non_admin_series_search ? form.allow_non_admin_series_search.checked || false : (currentSettings && currentSettings.allow_non_admin_series_search) || false,
+    skip_known_series_search: form.skip_known_series_search ? form.skip_known_series_search.checked || false : (currentSettings && currentSettings.skip_known_series_search) !== false,
+    debug_logging: form.debug_logging ? form.debug_logging.checked || false : (currentSettings && currentSettings.debug_logging) || false,
+    developer_mode: form.developer_mode ? form.developer_mode.checked || false : (currentSettings && currentSettings.developer_mode) || false,
+    proxy_enabled: form.proxy_enabled ? form.proxy_enabled.checked || false : (currentSettings && currentSettings.proxy_enabled) || false,
+    proxy_url: form.proxy_url ? form.proxy_url.value || null : (currentSettings && currentSettings.proxy_url) || null,
+    proxy_username: form.proxy_username ? form.proxy_username.value || null : (currentSettings && currentSettings.proxy_username) || null,
+    proxy_password: form.proxy_password ? form.proxy_password.value || null : (currentSettings && currentSettings.proxy_password) || null,
     secret_key: currentSettings && currentSettings.secret_key || null,
-    users_can_edit_frontpage_slug: form.users_can_edit_frontpage_slug.checked || false,
-    google_analytics_id: form.google_analytics_id.value || null
+    users_can_edit_frontpage_slug: form.users_can_edit_frontpage_slug ? form.users_can_edit_frontpage_slug.checked || false : (currentSettings && currentSettings.users_can_edit_frontpage_slug) || false,
+    google_analytics_id: form.google_analytics_id ? form.google_analytics_id.value || null : (currentSettings && currentSettings.google_analytics_id) || null
   };
   const resp = await fetch(apiPath('/api/settings'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
   if (resp.ok) {
     document.getElementById('saved').style.display = 'block';
     setTimeout(()=>{document.getElementById('saved').style.display='none'},2000);
     await loadSettings();
+    // If developer mode state changed, reload the page so developer-only controls are rendered by the server
+    if ((currentSettings && !!currentSettings.developer_mode) !== (form.developer_mode ? !!form.developer_mode.checked : false)) {
+      location.reload();
+    }
   }
 });
 
