@@ -119,20 +119,9 @@ def _get_publication_dt(book: Any, series_asin: Optional[str] = None, series_cac
 
 
 def _format_time_left(release_dt: _dt, now: _dt) -> tuple[str, int | None, int | None]:
-    """Return a (time_left_str, hours_left or None, days_left or None).
-
-    If less than 1 day left, return hours (rounded up). Otherwise return days (rounded up).
-    """
-    delta = release_dt - now
-    total_seconds = delta.total_seconds()
-    if total_seconds <= 0:
-        return ("today", None, 0)
-    one_day = 24 * 60 * 60
-    if total_seconds < one_day:
-        hours = math.ceil(total_seconds / 3600)
-        return (f"{hours} hours", hours, None)
-    days = math.ceil(total_seconds / one_day)
-    return (f"{days} days", None, days)
+    # Delegate to shared helper to avoid duplicate logic and keep a shim for tests
+    from .app_helpers import format_time_left as _fmt
+    return _fmt(release_dt, now)
 
 
 from .auth import get_current_user, verify_password, create_access_token, TOKEN_NAME
@@ -152,10 +141,29 @@ def convert_for_json(obj):
         return [convert_for_json(item) for item in obj]
     else:
         return obj
-from .settings import load_settings, ensure_default_admin
+from . import settings as settings_mod
 from .__version__ import __version__
 from .tasks import worker
-from prometheus_client import Gauge, Counter, generate_latest
+from .app_helpers import (
+    parse_date,
+    format_dt,
+    format_d,
+    format_runtime,
+    preload_series_data,
+    compute_num_latest,
+)
+from prometheus_client import Gauge, Counter, generate_latest, REGISTRY
+
+
+def _get_or_create_metric(name, ctor, *args, **kwargs):
+    try:
+        return ctor(name, *args, **kwargs)
+    except ValueError:
+        # Metric already registered; return existing collector if present
+        try:
+            return REGISTRY._names_to_collectors.get(name)
+        except Exception:
+            return None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -172,10 +180,10 @@ BASE_DIR = Path(__file__).resolve().parent
 BASE_PATH = "/config"
 
 # Prometheus metrics
-series_count = Gauge('audiobook_series_total', 'Total number of series')
-user_count = Gauge('audiobook_users_total', 'Total number of users')
-login_attempts = Counter('audiobook_login_attempts_total', 'Total login attempts', ['status'])
-failed_logins = Counter('audiobook_failed_logins_total', 'Total failed logins')
+series_count = _get_or_create_metric('audiobook_series_total', Gauge, 'Total number of series')
+user_count = _get_or_create_metric('audiobook_users_total', Gauge, 'Total number of users')
+login_attempts = _get_or_create_metric('audiobook_login_attempts_total', Counter, 'Total login attempts', ['status'])
+failed_logins = _get_or_create_metric('audiobook_failed_logins_total', Counter, 'Total failed logins')
 
 def _p(path: str) -> str:
     """Prefix a route path with the configured base."""
@@ -188,11 +196,11 @@ async def get_admin_user(request: Request):
     return user
 
 async def _start_worker():
-    ensure_default_admin()
+    settings_mod.ensure_default_admin()
     ensure_indexes()
     rebuild_series_user_counts()
     # Cleanup old logs
-    settings = load_settings()
+    settings = settings_mod.load_settings()
     cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=settings.log_retention_days)
     from .db import get_logs_collection
     logs_col = get_logs_collection()
@@ -203,9 +211,8 @@ async def _stop_worker():
     worker.stop()
 
 def create_app() -> FastAPI:
-    from .settings import load_settings
-    settings = load_settings()
-    if settings.debug_logging:
+    settings = settings_mod.load_settings()
+    if getattr(settings, "debug_logging", False):
         logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
     else:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -235,7 +242,7 @@ def create_app() -> FastAPI:
     def render_frontpage_for_slug(request: Request, slug: str):
         if not slug:
             return None
-        settings = load_settings()
+        settings = settings_mod.load_settings()
         from .db import get_users_collection
         from .library import get_user_library
         users_col = get_users_collection()
@@ -246,94 +253,21 @@ def create_app() -> FastAPI:
         date_format = user_doc.get("date_format", "de")
         library = get_user_library(username)
         # How many latest releases to show (user preference).
-        try:
-            num_latest = int(user_doc.get('latest_count') or 4)
-        except Exception:
-            num_latest = 4
-        num_latest = max(1, min(24, num_latest))
-        # How many latest releases to show (user preference).
-        try:
-            num_latest = int(user_doc.get('latest_count') or 4)
-        except Exception:
-            num_latest = 4
-        num_latest = max(1, min(24, num_latest))
+        num_latest = compute_num_latest(user_doc)
 
         from datetime import datetime, timezone
 
-
-        # Pre-load all series data to avoid N+1 queries in _get_publication_dt
-        series_asins = [getattr(it, 'asin', None) for it in library if getattr(it, 'asin', None)]
-        series_cache: dict = {}
-        if series_asins:
-            try:
-                # Load series with books data for publication date lookups
-                series_docs = get_series_collection().find(
-                    {"_id": {"$in": series_asins}},
-                    {"books": 1, "publication_datetime": 1, "raw.publication_datetime": 1}
-                )
-                series_cache = {doc["_id"]: doc for doc in series_docs}
-            except Exception:
-                series_cache = {}
+        # Pre-load series cache and narrator warnings
+        series_asins = [getattr(series_item, 'asin', None) for series_item in library if getattr(series_item, 'asin', None)]
+        series_cache, narrator_warnings_map = preload_series_data(series_asins)
 
         # Local wrapper to call module helpers with a per-request series cache
-        def _get_publication_dt_local(book):
-            return _get_publication_dt(book, series_asin=getattr(it, 'asin', None), series_cache=series_cache)
+        def _get_publication_dt_local(book, series_item_ref=None):
+            # If series_item_ref is provided use its asin, otherwise fallback to book lookup
+            series_asin = getattr(series_item_ref, 'asin', None) if series_item_ref is not None else None
+            return _get_publication_dt(book, series_asin=series_asin or getattr(book, 'asin', None), series_cache=series_cache)
 
-        # Pre-load narrator warnings for all series
-        narrator_warnings_map: dict[str, list] = {}
-        if series_asins:
-            try:
-                # Use projection to only load necessary fields
-                docs = get_series_collection().find(
-                    {"_id": {"$in": series_asins}}, 
-                    {"narrator_warnings": 1}
-                )
-                narrator_warnings_map = {
-                    doc.get("_id"): doc.get("narrator_warnings", []) or []
-                    for doc in docs
-                    if isinstance(doc, dict)
-                }
-            except Exception:
-                narrator_warnings_map = {}
-
-        def _parse_date(s):
-            try:
-                return datetime.fromisoformat((s or "").split("T")[0]).replace(tzinfo=timezone.utc)
-            except Exception:
-                return None
-
-        def _format_dt(dt: datetime | None):
-            if not dt:
-                return "—"
-            def pad(n):
-                return str(n).zfill(2)
-            if date_format == "de":
-                return f"{pad(dt.day)}.{pad(dt.month)}.{dt.year} {pad(dt.hour)}:{pad(dt.minute)}"
-            if date_format == "us":
-                return f"{pad(dt.month)}/{pad(dt.day)}/{dt.year} {pad(dt.hour)}:{pad(dt.minute)}"
-            return f"{dt.date().isoformat()} {pad(dt.hour)}:{pad(dt.minute)}"
-
-        def _format_d(dt: datetime | None):
-            if not dt:
-                return "—"
-            def pad(n):
-                return str(n).zfill(2)
-            if date_format == "de":
-                return f"{pad(dt.day)}.{pad(dt.month)}.{dt.year}"
-            if date_format == "us":
-                return f"{pad(dt.month)}/{pad(dt.day)}/{dt.year}"
-            return dt.date().isoformat()
-
-        def _format_runtime(val) -> str | None:
-            try:
-                m = int(val or 0)
-            except Exception:
-                return None
-            if m <= 0:
-                return None
-            h = m // 60
-            mins = m % 60
-            return f"{h}h {mins}m" if h else f"{mins}m"
+        # Use shared helpers for date parsing/formatting and runtimes
 
         now = _dt.now(timezone.utc).replace(tzinfo=None)
         upcoming_cards = []
@@ -342,94 +276,94 @@ def create_app() -> FastAPI:
         total_books = 0
         last_refresh_dt = None
 
-        for it in library:
-            books = it.books if isinstance(it.books, list) else []
+        for series_item in library:
+            books = series_item.books if isinstance(series_item.books, list) else []
             visible = visible_books(books)
             total_books += len(visible)
-            if it.fetched_at:
-                dt = _parse_date(it.fetched_at)
+            if series_item.fetched_at:
+                dt = parse_date(series_item.fetched_at)
                 if dt and (not last_refresh_dt or dt > last_refresh_dt):
                     last_refresh_dt = dt
             series_last_release = None
             series_next_release = None
-            for b in visible:
-                rd = _get_publication_dt_local(b)
+            for book in visible:
+                rd = _get_publication_dt_local(book, series_item_ref=series_item)
                 if not rd:
                     continue
                 if rd <= now and (not series_last_release or rd > series_last_release):
                     series_last_release = rd
                 if rd > now and (not series_next_release or rd < series_next_release):
                     series_next_release = rd
-                book_url = getattr(b, "url", None)
-                if not book_url and getattr(b, "asin", None):
-                    book_url = f"https://www.audible.com/pd/{getattr(b, 'asin', '')}"
+                book_url = getattr(book, "url", None)
+                if not book_url and getattr(book, "asin", None):
+                    book_url = f"https://www.audible.com/pd/{getattr(book, 'asin', '')}"
                 if rd > now:
                     # format time-left as days or hours depending on remaining time
                     time_left_str, hours_left, days_left = _format_time_left(rd, now)
-                    runtime_str = _format_runtime(getattr(b, "runtime", None))
+                    runtime_str = format_runtime(getattr(book, "runtime", None))
                     upcoming_cards.append({
-                        "title": getattr(b, "title", None) or it.title,
-                        "series": it.title,
-                        "narrators": getattr(b, "narrators", None) or "",
-                        "runtime": getattr(b, "runtime", None) or "",
+                        "title": getattr(book, "title", None) or series_item.title,
+                        "series": series_item.title,
+                        "narrators": getattr(book, "narrators", None) or "",
+                        "runtime": getattr(book, "runtime", None) or "",
                         "runtime_str": runtime_str,
                         "release_dt": rd,
                         "release_dt_iso": rd.isoformat() + 'Z',
-                        "release_str": _format_d(rd),
+                        "release_str": format_d(rd, date_format),
                         "time_left_str": time_left_str,
                         "hours_left": hours_left,
                         "days_left": days_left or 0,
-                        "image": getattr(b, "image", None),
+                        "image": getattr(book, "image", None),
                         "url": book_url,
                     })
                 else:
                     days_ago = (now - rd).days
-                    runtime_str = _format_runtime(getattr(b, "runtime", None))
+                    runtime_str = format_runtime(getattr(book, "runtime", None))
                     latest_cards.append({
-                        "title": getattr(b, "title", None) or it.title,
-                        "series": it.title,
-                        "narrators": getattr(b, "narrators", None) or "",
-                        "runtime": getattr(b, "runtime", None) or "",
+                        "title": getattr(book, "title", None) or series_item.title,
+                        "series": series_item.title,
+                        "narrators": getattr(book, "narrators", None) or "",
+                        "runtime": getattr(book, "runtime", None) or "",
                         "runtime_str": runtime_str,
                         "release_dt_iso": rd.isoformat() + 'Z',
                         "release_dt": rd,
-                        "release_str": _format_d(rd),
+                        "release_str": format_d(rd, date_format),
                         "days_ago": days_ago,
-                        "image": getattr(b, "image", None),
+                        "image": getattr(book, "image", None),
                         "url": book_url,
                     })
             narr_set = set()
             runtime_mins = 0
-            for b in visible:
-                if getattr(b, "narrators", None):
-                    for n in str(getattr(b, "narrators", "")).split(","):
+            for book in visible:
+                if getattr(book, "narrators", None):
+                    for n in str(getattr(book, "narrators", "")).split(","):
                         n = n.strip()
                         if n:
                             narr_set.add(n)
                 try:
-                    runtime_mins += int(getattr(b, "runtime", None) or 0)
+                    runtime_mins += int(getattr(book, "runtime", None) or 0)
                 except Exception:
                     pass
             hours = runtime_mins // 60
             mins = runtime_mins % 60
             runtime_str = f"{hours}h {mins}m" if hours else f"{mins}m"
             cover = None
-            for b in visible:
-                if getattr(b, "image", None):
-                    cover = getattr(b, "image", None)
+            for book in visible:
+                if getattr(book, "image", None):
+                    cover = getattr(book, "image", None)
                     break
             if not cover:
-                for b in books:
-                    if getattr(b, "image", None):
-                        cover = getattr(b, "image", None)
+                for book in books:
+                    if getattr(book, "image", None):
+                        cover = getattr(book, "image", None)
                         break
-            last_release_str = _format_d(series_last_release)
+            last_release_str = format_d(series_last_release, date_format)
             last_release_ts = series_last_release.isoformat() if series_last_release else None
-            next_release_str = _format_d(series_next_release)
+            next_release_str = format_d(series_next_release, date_format)
             next_release_ts = series_next_release.isoformat() if series_next_release else None
             series_rows.append({
-                "title": it.title,
-                "asin": it.asin,
+                "title": series_item.title,
+                "asin": series_item.asin,
                 "narrators": ", ".join(sorted(narr_set)),
                 "book_count": len(visible),
                 "runtime": runtime_str,
@@ -439,7 +373,7 @@ def create_app() -> FastAPI:
                 "next_release": next_release_str,
                 "next_release_ts": next_release_ts,
                 "duration_minutes": runtime_mins,
-                "url": it.url,
+                "url": series_item.url,
             })
 
         upcoming_cards.sort(key=lambda x: x["release_dt"])
@@ -488,7 +422,7 @@ def create_app() -> FastAPI:
         stats = {
             "series_count": len(library),
             "books_count": total_books,
-            "last_refresh": _format_dt(last_refresh_dt),
+            "last_refresh": format_dt(last_refresh_dt, date_format),
             "slug": user_doc.get("frontpage_slug") or username,
             "username": username,
         }
@@ -515,7 +449,7 @@ def create_app() -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def public_root(request: Request):
-        settings = load_settings()
+        settings = settings_mod.load_settings()
         slug = (settings.default_frontpage_slug or "").strip()
         page = render_frontpage_for_slug(request, slug)
         if page:
@@ -524,13 +458,13 @@ def create_app() -> FastAPI:
 
     @app.get(_p("/"), response_class=HTMLResponse)
     async def config_root(request: Request):
-        settings = load_settings()
+        settings = settings_mod.load_settings()
         return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": None, "version": __version__})
 
     @app.get(_p("/login"), response_class=HTMLResponse)
     async def login_get(request: Request):  # , csrf_protect: CsrfProtect = Depends()):
         # csrf_token = csrf_protect.generate_csrf()
-        settings = load_settings()
+        settings = settings_mod.load_settings()
         resp = templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": None, "version": __version__})  # , "csrf_token": csrf_token})
         # csrf_protect.set_csrf_cookie(resp)
         return resp
@@ -546,19 +480,19 @@ def create_app() -> FastAPI:
         users = get_users_collection()
         user_doc = users.find_one({"username": username})
         if not user_doc:
-            ensure_default_admin()
+            settings_mod.ensure_default_admin()
             user_doc = users.find_one({"username": username})
         if not user_doc:
             log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "User not found")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
-            settings = load_settings()
+            settings = settings_mod.load_settings()
             return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Invalid credentials", "version": __version__})
         if is_account_locked(user_doc):
             log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "Account locked")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
-            settings = load_settings()
+            settings = settings_mod.load_settings()
             return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Account locked due to too many failed attempts", "version": __version__})
         if not verify_password(password, user_doc.get("password_hash", "")):
             record_failed_attempt(username)
@@ -566,7 +500,7 @@ def create_app() -> FastAPI:
             logger.warning(f"Failed login attempt for username: {username}")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
-            settings = load_settings()
+            settings = settings_mod.load_settings()
             return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Invalid credentials", "version": __version__})
         record_successful_login(username)
         token = create_access_token({"sub": username})
@@ -610,7 +544,7 @@ def create_app() -> FastAPI:
 
     @app.get(_p("/settings"), response_class=HTMLResponse)
     async def settings_get(request: Request, user=Depends(get_current_user)):
-        settings = load_settings()
+        settings = settings_mod.load_settings()
         return templates.TemplateResponse("settings.html", {"request": request, "settings": settings, "user": user, "version": __version__})
 
     # Chrome DevTools and some extensions probe this path; return 204 to silence 404 noise
@@ -620,7 +554,7 @@ def create_app() -> FastAPI:
 
     @app.get(_p("/library"), response_class=HTMLResponse)
     async def library_page(request: Request, user=Depends(get_current_user)):
-        settings = load_settings()
+        settings = settings_mod.load_settings()
         return templates.TemplateResponse("library.html", {"request": request, "user": user, "settings": settings, "version": __version__})
 
     @app.get("/home/{slug}", response_class=HTMLResponse)
@@ -631,58 +565,17 @@ def create_app() -> FastAPI:
         users_col = get_users_collection()
         user_doc = users_col.find_one({"$or": [{"frontpage_slug": slug}, {"username": slug}]})
         if not user_doc:
-            settings = load_settings()
+            settings = settings_mod.load_settings()
             return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "User not found", "version": __version__}, status_code=404)
         username = user_doc.get("username")
         date_format = user_doc.get("date_format", "de")
         library = get_user_library(username)
         # How many latest releases to show (user preference).
-        try:
-            num_latest = int(user_doc.get('latest_count') or 4)
-        except Exception:
-            num_latest = 4
-        num_latest = max(1, min(24, num_latest))
+        num_latest = compute_num_latest(user_doc)
 
         from datetime import datetime, timezone
 
-        def _parse_date(s):
-            try:
-                return datetime.fromisoformat((s or "").split("T")[0]).replace(tzinfo=timezone.utc)
-            except Exception:
-                return None
-
-        def _format_dt(dt: datetime | None):
-            if not dt:
-                return "—"
-            def pad(n):
-                return str(n).zfill(2)
-            if date_format == "de":
-                return f"{pad(dt.day)}.{pad(dt.month)}.{dt.year} {pad(dt.hour)}:{pad(dt.minute)}"
-            if date_format == "us":
-                return f"{pad(dt.month)}/{pad(dt.day)}/{dt.year} {pad(dt.hour)}:{pad(dt.minute)}"
-            return f"{dt.date().isoformat()} {pad(dt.hour)}:{pad(dt.minute)}"
-
-        def _format_d(dt: datetime | None):
-            if not dt:
-                return "—"
-            def pad(n):
-                return str(n).zfill(2)
-            if date_format == "de":
-                return f"{pad(dt.day)}.{pad(dt.month)}.{dt.year}"
-            if date_format == "us":
-                return f"{pad(dt.month)}/{pad(dt.day)}/{dt.year}"
-            return dt.date().isoformat()
-
-        def _format_runtime(val) -> str | None:
-            try:
-                m = int(val or 0)
-            except Exception:
-                return None
-            if m <= 0:
-                return None
-            h = m // 60
-            mins = m % 60
-            return f"{h}h {mins}m" if h else f"{mins}m"
+        # Use shared helpers for date parsing/formatting and runtimes
 
         now = _dt.now(timezone.utc).replace(tzinfo=None)
         upcoming_cards = []
@@ -722,94 +615,94 @@ def create_app() -> FastAPI:
             except Exception:
                 narrator_warnings_map = {}
 
-        for it in library:
-            books = it.books if isinstance(it.books, list) else []
+        for series_item in library:
+            books = series_item.books if isinstance(series_item.books, list) else []
             visible = visible_books(books)
             total_books += len(visible)
-            if it.fetched_at:
-                dt = _parse_date(it.fetched_at)
+            if series_item.fetched_at:
+                dt = parse_date(series_item.fetched_at)
                 if dt and (not last_refresh_dt or dt > last_refresh_dt):
                     last_refresh_dt = dt
             series_last_release = None
             series_next_release = None
             # Use the pre-loaded global series_cache instead of per-series cache
             def _get_publication_dt_local(book):
-                return _get_publication_dt(book, series_asin=getattr(it, 'asin', None), series_cache=series_cache)
-            for b in visible:
-                rd = _get_publication_dt_local(b)
+                return _get_publication_dt(book, series_asin=getattr(series_item, 'asin', None), series_cache=series_cache)
+            for book in visible:
+                rd = _get_publication_dt_local(book)
                 if not rd:
                     continue
                 if rd <= now and (not series_last_release or rd > series_last_release):
                     series_last_release = rd
                 if rd > now and (not series_next_release or rd < series_next_release):
                     series_next_release = rd
-                book_url = getattr(b, "url", None)
-                if not book_url and getattr(b, "asin", None):
-                    book_url = f"https://www.audible.com/pd/{getattr(b, 'asin', '')}"
+                book_url = getattr(book, "url", None)
+                if not book_url and getattr(book, "asin", None):
+                    book_url = f"https://www.audible.com/pd/{getattr(book, 'asin', '')}"
                 if rd > now:
                     days = (rd - now).days + (1 if (rd - now).seconds > 0 else 0)
-                    runtime_str = _format_runtime(getattr(b, "runtime", None))
+                    runtime_str = format_runtime(getattr(book, "runtime", None))
                     upcoming_cards.append({
-                        "title": getattr(b, "title", None) or it.title,
-                        "series": it.title,
-                        "narrators": getattr(b, "narrators", None) or "",
-                        "runtime": getattr(b, "runtime", None) or "",
+                        "title": getattr(book, "title", None) or series_item.title,
+                        "series": series_item.title,
+                        "narrators": getattr(book, "narrators", None) or "",
+                        "runtime": getattr(book, "runtime", None) or "",
                         "runtime_str": runtime_str,
                         "release_dt_iso": rd.isoformat() + 'Z',
                         "release_dt": rd,
-                        "release_str": _format_d(rd),
+                        "release_str": format_d(rd, date_format),
                         "days_left": days,
-                        "image": getattr(b, "image", None),
+                        "image": getattr(book, "image", None),
                         "url": book_url,
                     })
                 else:
                     days_ago = (now - rd).days
-                    runtime_str = _format_runtime(getattr(b, "runtime", None))
+                    runtime_str = format_runtime(getattr(book, "runtime", None))
                     latest_cards.append({
-                        "title": getattr(b, "title", None) or it.title,
-                        "series": it.title,
-                        "narrators": getattr(b, "narrators", None) or "",
+                        "title": getattr(book, "title", None) or series_item.title,
+                        "series": series_item.title,
+                        "narrators": getattr(book, "narrators", None) or "",
                         "release_dt_iso": rd.isoformat() + 'Z',
-                        "runtime": getattr(b, "runtime", None) or "",
+                        "runtime": getattr(book, "runtime", None) or "",
                         "runtime_str": runtime_str,
                         "release_dt": rd,
-                        "release_str": _format_d(rd),
+                        "release_str": format_d(rd, date_format),
                         "days_ago": days_ago,
-                        "image": getattr(b, "image", None),
+                        "image": getattr(book, "image", None),
                         "url": book_url,
                     })
             narr_set = set()
             runtime_mins = 0
-            for b in visible:
-                if getattr(b, "narrators", None):
-                    for n in str(getattr(b, "narrators", "")).split(","):
+            for book in visible:
+                if getattr(book, "narrators", None):
+                    for n in str(getattr(book, "narrators", "")).split(","):
                         n = n.strip()
                         if n:
                             narr_set.add(n)
                 try:
-                    runtime_mins += int(getattr(b, "runtime", None) or 0)
+                    runtime_mins += int(getattr(book, "runtime", None) or 0)
                 except Exception:
                     pass
             hours = runtime_mins // 60
             mins = runtime_mins % 60
             runtime_str = f"{hours}h {mins}m" if hours else f"{mins}m"
             cover = None
-            for b in visible:
-                if getattr(b, "image", None):
-                    cover = getattr(b, "image", None)
+            for book in visible:
+                if getattr(book, "image", None):
+                    cover = getattr(book, "image", None)
                     break
             if not cover:
-                for b in books:
-                    if getattr(b, "image", None):
-                        cover = getattr(b, "image", None)
+                for book in books:
+                    if getattr(book, "image", None):
+                        cover = getattr(book, "image", None)
                         break
-            last_release_str = _format_d(series_last_release)
+            last_release_str = format_d(series_last_release, date_format)
             last_release_ts = series_last_release.isoformat() if series_last_release else None
-            next_release_str = _format_d(series_next_release)
+            next_release_str = format_d(series_next_release, date_format)
             next_release_ts = series_next_release.isoformat() if series_next_release else None
             series_rows.append({
-                "title": it.title,
-                "asin": it.asin,
+                "title": series_item.title,
+                "asin": series_item.asin,
                 "narrators": ", ".join(sorted(narr_set)),
                 "book_count": len(visible),
                 "runtime": runtime_str,
@@ -819,7 +712,7 @@ def create_app() -> FastAPI:
                 "next_release": next_release_str,
                 "next_release_ts": next_release_ts,
                 "duration_minutes": runtime_mins,
-                "url": it.url,
+                "url": series_item.url,
             })
 
         upcoming_cards.sort(key=lambda x: x["release_dt"])
@@ -867,12 +760,12 @@ def create_app() -> FastAPI:
         stats = {
             "series_count": len(library),
             "books_count": total_books,
-            "last_refresh": _format_dt(last_refresh_dt),
+            "last_refresh": format_dt(last_refresh_dt, date_format),
             "slug": user_doc.get("frontpage_slug") or username,
             "username": username,
         }
 
-        settings = load_settings()
+        settings = settings_mod.load_settings()
 
         return templates.TemplateResponse(
             "frontpage.html",
@@ -908,27 +801,27 @@ def create_app() -> FastAPI:
 
     @app.get(_p("/series-books"), response_class=HTMLResponse)
     async def series_books_page(request: Request, user=Depends(get_current_user)):
-        settings = load_settings()
+        settings = settings_mod.load_settings()
         return templates.TemplateResponse("series_books.html", {"request": request, "user": user, "settings": settings, "version": __version__})
 
     @app.get(_p("/users"), response_class=HTMLResponse)
     async def users_page(request: Request, user=Depends(get_admin_user)):
-        settings = load_settings()
+        settings = settings_mod.load_settings()
         return templates.TemplateResponse("users.html", {"request": request, "user": user, "settings": settings, "version": __version__})
 
     @app.get(_p("/profile"), response_class=HTMLResponse)
     async def profile_page(request: Request, user=Depends(get_current_user)):
-        settings = load_settings()
+        settings = settings_mod.load_settings()
         return templates.TemplateResponse("profile.html", {"request": request, "user": user, "settings": settings, "version": __version__})
 
     @app.get(_p("/series-admin"), response_class=HTMLResponse)
     async def series_admin_page(request: Request, user=Depends(get_admin_user)):
-        settings = load_settings()
+        settings = settings_mod.load_settings()
         return templates.TemplateResponse("series_admin.html", {"request": request, "user": user, "settings": settings, "version": __version__})
 
     @app.get(_p("/jobs"), response_class=HTMLResponse)
     async def jobs_page(request: Request, user=Depends(get_admin_user)):
-        settings = load_settings()
+        settings = settings_mod.load_settings()
         return templates.TemplateResponse("jobs.html", {"request": request, "user": user, "settings": settings, "version": __version__})
 
     @app.get(_p("/logs"), response_class=HTMLResponse)
@@ -938,7 +831,7 @@ def create_app() -> FastAPI:
         logs = list(logs_col.find().sort("timestamp", -1).limit(100))
         # Convert ObjectId and datetime to string for JSON serialization
         logs = [convert_for_json(log) for log in logs]
-        settings = load_settings()
+        settings = settings_mod.load_settings()
         return templates.TemplateResponse("logs.html", {"request": request, "user": user, "logs": logs, "settings": settings, "version": __version__})
 
     @app.get("/metrics")

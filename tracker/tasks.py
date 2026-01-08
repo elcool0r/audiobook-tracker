@@ -8,6 +8,7 @@ from queue import SimpleQueue, Empty
 from typing import Any, Dict
 
 from bson import ObjectId
+from pymongo import UpdateOne
 
 from .library import (
     _fetch_series_books_internal,
@@ -20,10 +21,9 @@ from .library import (
     set_series_next_refresh,
     touch_series_fetched,
 )
-from lib.audible_api_search import get_product_by_asin
 from .settings import load_settings
 from .db import get_jobs_collection, get_series_collection, get_users_collection, get_user_library_collection
-from lib.audible_api_search import DEFAULT_RESPONSE_GROUPS
+from lib.audible_api_search import get_product_by_asin, DEFAULT_RESPONSE_GROUPS, run_coro_sync
 
 AUTO_REFRESH_CYCLE_SEC = 24 * 60 * 60
 
@@ -225,7 +225,10 @@ class TaskWorker:
                         proxies = _build_proxies(settings)
                     except Exception:
                         pass
-                    resp = asyncio.run(get_product_by_asin(parent_asin, response_groups=response_groups, auth_token=None, marketplace=None, proxies=proxies, user_agent=settings.user_agent))
+                    try:
+                        resp = run_coro_sync(get_product_by_asin(parent_asin, response_groups=response_groups, auth_token=None, marketplace=None, proxies=proxies, user_agent=settings.user_agent))
+                    except Exception:
+                        resp = None
                     product = resp.get("product") if isinstance(resp, dict) and "product" in resp else resp
                     if isinstance(product, dict):
                         set_series_raw(parent_asin, product)
@@ -330,7 +333,10 @@ class TaskWorker:
                     except Exception:
                         return None
 
-                parent_obj = asyncio.run(_load_product(asin))
+                try:
+                    parent_obj = run_coro_sync(_load_product(asin))
+                except Exception:
+                    parent_obj = None
                 parent_obj = parent_obj.get("product") if isinstance(parent_obj, dict) and "product" in parent_obj else parent_obj
 
                 parent_asin = None
@@ -553,21 +559,39 @@ class TaskWorker:
         user_cache: Dict[str, Dict[str, Any]] = {}
         series_cache: Dict[str, Dict[str, Any]] = {}
 
-        entries = list(lib_col.find({"series_asin": {"$exists": True, "$ne": None}}))
-        if not entries:
+        filter_q = {"series_asin": {"$exists": True, "$ne": None}}
+        count = lib_col.count_documents(filter_q)
+        if not count:
             return
+        entries_cursor = lib_col.find(filter_q, {"username": 1, "series_asin": 1, "notified_releases": 1, "_id": 1}).batch_size(500)
+
+        # Batch-prefetch distinct usernames and series ASINs to avoid per-entry find_one calls
+        try:
+            usernames = lib_col.distinct("username", filter_q)
+        except Exception:
+            usernames = []
+        try:
+            series_asins = lib_col.distinct("series_asin", filter_q)
+        except Exception:
+            series_asins = []
+
+        if usernames:
+            for u in users_col.find({"username": {"$in": usernames}}, {"username": 1, "notifications": 1}):
+                user_cache[u.get("username")] = u or {}
+
+        if series_asins:
+            for s in series_col.find({"_id": {"$in": series_asins}}, {"_id": 1, "books": 1, "title": 1, "cover_image": 1}):
+                series_cache[s.get("_id")] = s or {}
 
         def _get_user(username: str) -> Dict[str, Any]:
-            if username not in user_cache:
-                user_cache[username] = users_col.find_one({"username": username}) or {}
             return user_cache.get(username) or {}
 
         def _get_series(asin: str) -> Dict[str, Any]:
-            if asin not in series_cache:
-                series_cache[asin] = series_col.find_one({"_id": asin}) or {}
             return series_cache.get(asin) or {}
 
-        for entry in entries:
+        # Collect UpdateOne operations to batch-write notified state changes
+        release_ops: list[UpdateOne] = []
+        for entry in entries_cursor:
             username = entry.get("username")
             asin = entry.get("series_asin")
             if not username or not asin:
@@ -654,9 +678,17 @@ class TaskWorker:
 
             if pending_asins:
                 try:
-                    lib_col.update_one({"_id": entry.get("_id")}, {"$addToSet": {"notified_releases": {"$each": pending_asins}}})
+                    release_ops.append(UpdateOne({"_id": entry.get("_id")}, {"$addToSet": {"notified_releases": {"$each": pending_asins}}}))
                 except Exception:
                     pass
+
+        # Execute batched writes in reasonable-sized chunks
+        if release_ops:
+            try:
+                for i in range(0, len(release_ops), 500):
+                    lib_col.bulk_write(release_ops[i : i + 500], ordered=False)
+            except Exception:
+                pass
 
     def _check_new_audiobook_notifications(self):
         """Send new-audiobook notifications when new ASINs appear even if the user hasn't triggered a refresh."""
@@ -664,24 +696,42 @@ class TaskWorker:
         users_col = get_users_collection()
         series_col = get_series_collection()
 
-        entries = list(lib_col.find({"series_asin": {"$exists": True, "$ne": None}}))
-        if not entries:
+        filter_q = {"series_asin": {"$exists": True, "$ne": None}}
+        count = lib_col.count_documents(filter_q)
+        if not count:
             return
+        entries_cursor = lib_col.find(filter_q, {"username": 1, "series_asin": 1, "notified_new_asins": 1, "notified_releases": 1, "_id": 1}).batch_size(500)
 
         user_cache: Dict[str, Dict[str, Any]] = {}
         series_cache: Dict[str, Dict[str, Any]] = {}
 
+        # Batch-prefetch distinct usernames and series ASINs to avoid per-entry find_one calls
+        try:
+            usernames = lib_col.distinct("username", filter_q)
+        except Exception:
+            usernames = []
+        try:
+            series_asins = lib_col.distinct("series_asin", filter_q)
+        except Exception:
+            series_asins = []
+
+        if usernames:
+            for u in users_col.find({"username": {"$in": usernames}}, {"username": 1, "notifications": 1}):
+                user_cache[u.get("username")] = u or {}
+
+        if series_asins:
+            for s in series_col.find({"_id": {"$in": series_asins}}, {"_id": 1, "books": 1, "title": 1, "cover_image": 1}):
+                series_cache[s.get("_id")] = s or {}
+
         def _get_user(username: str) -> Dict[str, Any]:
-            if username not in user_cache:
-                user_cache[username] = users_col.find_one({"username": username}) or {}
             return user_cache.get(username) or {}
 
         def _get_series(asin: str) -> Dict[str, Any]:
-            if asin not in series_cache:
-                series_cache[asin] = series_col.find_one({"_id": asin}) or {}
             return series_cache.get(asin) or {}
 
-        for entry in entries:
+        # Collect UpdateOne operations to batch-write notified state changes
+        new_ops: list[UpdateOne] = []
+        for entry in entries_cursor:
             username = entry.get("username")
             asin = entry.get("series_asin")
             if not username or not asin:
@@ -768,15 +818,15 @@ class TaskWorker:
             try:
                 entry_id = entry.get("_id")
                 if entry_id is not None:
-                    lib_col.update_one(
-                        {"_id": entry_id},
-                        {
-                            "$set": {
-                                "notified_new_asins": list(book_map.keys()),
-                                "notified_new_asins_initialized": True,
-                            }
-                        },
-                    )
+                    new_ops.append(UpdateOne({"_id": entry_id}, {"$set": {"notified_new_asins": list(book_map.keys()), "notified_new_asins_initialized": True}}))
+            except Exception:
+                pass
+
+        # Flush batched updates
+        if new_ops:
+            try:
+                for i in range(0, len(new_ops), 500):
+                    lib_col.bulk_write(new_ops[i : i + 500], ordered=False)
             except Exception:
                 pass
 
@@ -840,6 +890,7 @@ class TaskWorker:
         series_title = series_doc.get("title") or f"Series {asin}"
 
         job_recorded = False
+        ops: list[UpdateOne] = []
         for entry in lib_col.find({"series_asin": asin}):
             username = entry.get("username")
             if not username:
@@ -954,8 +1005,11 @@ class TaskWorker:
                     for msg in to_send_msgs:
                         if msg[0] == "New Audiobook(s)" and len(msg) > 2:
                             to_mark_new.extend([a for a in msg[2] if a])
-                    if to_mark_new:
-                        lib_col.update_one({"_id": entry.get("_id")}, {"$addToSet": {"notified_new_asins": {"$each": to_mark_new}}})
+                        if to_mark_new:
+                            try:
+                                ops.append(UpdateOne({"_id": entry.get("_id")}, {"$addToSet": {"notified_new_asins": {"$each": to_mark_new}}}))
+                            except Exception:
+                                pass
                 except Exception:
                     pass
 
@@ -966,9 +1020,20 @@ class TaskWorker:
                         if msg[0] == "Audiobook Release" and len(msg) > 2:
                             to_mark_rel.extend(msg[2])
                     if to_mark_rel:
-                        lib_col.update_one({"_id": entry.get("_id")}, {"$addToSet": {"notified_releases": {"$each": to_mark_rel}}})
+                        try:
+                            ops.append(UpdateOne({"_id": entry.get("_id")}, {"$addToSet": {"notified_releases": {"$each": to_mark_rel}}}))
+                        except Exception:
+                            pass
                 except Exception:
                     pass
+
+        # Flush batched per-series notification updates
+        if ops:
+            try:
+                for i in range(0, len(ops), 500):
+                    lib_col.bulk_write(ops[i : i + 500], ordered=False)
+            except Exception:
+                pass
 
         return job_recorded
 
@@ -1035,27 +1100,46 @@ def _rebalance_auto_refresh(reference: datetime | None = None):
     if reference is None:
         reference = _now_dt()
     series_col = get_series_collection()
-    docs = list(series_col.find({}, {"_id": 1, "fetched_at": 1}))
-    if not docs:
+    total = series_col.count_documents({})
+    if not total:
         return
-    total = len(docs)
     # Use a safe fallback in case the module-level constant isn't available at runtime
     cycle_sec = globals().get("AUTO_REFRESH_CYCLE_SEC", 24 * 60 * 60)
     try:
         interval = cycle_sec / total
     except Exception:
         interval = cycle_sec
-    if interval <= 0:
-        interval = cycle_sec
+    # Ensure interval is a numeric value; fall back to cycle_sec on any error
+    try:
+        interval = float(interval)
+        if interval <= 0:
+            interval = float(cycle_sec)
+    except Exception:
+        interval = float(cycle_sec)
     now = reference
     offset_acc = interval
     from datetime import timezone
     datetime_min_utc = datetime.min.replace(tzinfo=timezone.utc)
-    for doc in sorted(docs, key=lambda d: _parse_iso_datetime(d.get("fetched_at")) or datetime_min_utc):
+    # Iterate cursor sorted by fetched_at (missing fetched_at sorts earliest)
+    cursor = series_col.find({}, {"_id": 1, "fetched_at": 1}).sort("fetched_at", 1)
+    ops: list[UpdateOne] = []
+    for doc in cursor:
         offset = max(int(offset_acc), 1)
         target = now + _delta_sec(offset)
-        set_series_next_refresh(doc.get("_id"), target.isoformat() + "Z")
+        ops.append(UpdateOne({"_id": doc.get("_id")}, {"$set": {"next_refresh_at": target.isoformat() + "Z"}}))
         offset_acc += interval
+
+    if ops:
+        try:
+            for i in range(0, len(ops), 500):
+                series_col.bulk_write(ops[i : i + 500], ordered=False)
+        except Exception:
+            # Fall back to setting individually if bulk write fails
+            for op in ops:
+                try:
+                    series_col.update_one(op._filter, op._doc)
+                except Exception:
+                    pass
 
 
 def _relationships_equal(a, b) -> bool:
@@ -1184,29 +1268,32 @@ def reschedule_all_series():
     settings = load_settings()
     series_col = get_series_collection()
     
-    # Get all series
-    all_series = list(series_col.find({}))
-    if not all_series:
+    # Count and iterate cursor to avoid loading all series into memory
+    count = series_col.count_documents({})
+    if not count:
         return {"count": 0, "message": "No series to reschedule"}
-    
-    # Use the full 24-hour cycle for rescheduling
     interval_sec = AUTO_REFRESH_CYCLE_SEC
-    
-    # Distribute series evenly across 24 hours
-    count = len(all_series)
     now = _now_dt()
-    
-    for i, series in enumerate(all_series):
+    cursor = series_col.find({}, {"_id": 1}).batch_size(500)
+    ops: list[UpdateOne] = []
+    for i, series in enumerate(cursor):
         # Calculate offset for this series across the 24h window
-        offset_sec = int((i / max(count, 1)) * interval_sec)
+        offset_sec = int((i / count) * interval_sec)
         next_refresh = now + _delta_sec(offset_sec)
         next_refresh_iso = next_refresh.isoformat() + "Z"
-        
-        # Update the series
-        series_col.update_one(
-            {"_id": series["_id"]},
-            {"$set": {"next_refresh_at": next_refresh_iso}}
-        )
+        ops.append(UpdateOne({"_id": series["_id"]}, {"$set": {"next_refresh_at": next_refresh_iso}}))
+
+    if ops:
+        try:
+            for i in range(0, len(ops), 500):
+                series_col.bulk_write(ops[i : i + 500], ordered=False)
+        except Exception:
+            # Fall back to individual updates
+            for op in ops:
+                try:
+                    series_col.update_one(op._filter, op._doc)
+                except Exception:
+                    pass
     
     return {"count": count, "message": f"Rescheduled {count} series over 24 hours"}
 

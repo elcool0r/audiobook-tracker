@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import asyncio
 from datetime import datetime, timezone
+from .app_helpers import parse_date_naive
 from typing import Any, Dict, List, Optional
 import base64
 import re
@@ -11,7 +12,7 @@ import unicodedata
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from lib.audible_api_search import DEFAULT_RESPONSE_GROUPS, get_product_by_asin
+from lib.audible_api_search import DEFAULT_RESPONSE_GROUPS, get_product_by_asin, run_coro_sync, _SESSION
 
 from pymongo import ASCENDING, UpdateOne
 
@@ -162,7 +163,7 @@ def compute_narrator_warnings(books: List[Dict[str, Any]] | None, series_asin: s
         rd = book.get("release_date")
         if isinstance(rd, str) and rd.strip():
             try:
-                return datetime.fromisoformat(rd.split("T")[0])
+                return parse_date_naive(rd)
             except Exception:
                 return None
         return None
@@ -233,13 +234,8 @@ def _deduplicate_books_by_title(books: List[Dict[str, Any]]) -> List[Dict[str, A
     from datetime import datetime
     
     def _parse_date(date_str: str | None) -> datetime | None:
-        """Parse date string (YYYY-MM-DD format) to datetime."""
-        if not date_str or not isinstance(date_str, str):
-            return None
-        try:
-            return datetime.fromisoformat(date_str.split("T")[0])
-        except Exception:
-            return None
+        """Parse date string (YYYY-MM-DD format) to naive datetime."""
+        return parse_date_naive(date_str)
     
     # Group books by title (case-insensitive)
     books_by_title: Dict[str, List[Dict[str, Any]]] = {}
@@ -324,12 +320,7 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
 
     # Sort processed books so UI and computations have deterministic ordering: by sequence then by release date (oldest first)
     def _parse_date_str(ds):
-        if isinstance(ds, str) and ds.strip():
-            try:
-                return datetime.fromisoformat(ds.split("T")[0])
-            except Exception:
-                return None
-        return None
+        return parse_date_naive(ds)
 
     processed_books.sort(key=lambda b: (_book_sequence(b, asin), _parse_date_str(b.get("release_date")) or datetime.max))
 
@@ -377,7 +368,10 @@ def get_user_library(username: str) -> List[LibraryItem]:
     if not entries:
         return []
     series_asins = [entry.get("series_asin") for entry in entries if entry.get("series_asin")]
-    docs = list(series_col.find({"_id": {"$in": series_asins}})) if series_asins else []
+    if series_asins:
+        docs = list(series_col.find({"_id": {"$in": series_asins}}, {"_id": 1, "title": 1, "url": 1, "books": 1, "cover_image": 1, "fetched_at": 1, "raw": 1, "next_refresh_at": 1, "user_count": 1, "original_title": 1, "narrator_warnings": 1, "ignore_narrator_warnings": 1}))
+    else:
+        docs = []
     series_map = {doc["_id"]: _series_payload(doc) for doc in docs}
     result: List[LibraryItem] = []
     for entry in entries:
@@ -477,6 +471,9 @@ def ensure_indexes() -> None:
     series_col = get_series_collection()
     series_col.create_index([("title", ASCENDING)])
     series_col.create_index([("user_count", ASCENDING)])
+    # Indexes to support scheduler and rebalancing queries
+    series_col.create_index([("next_refresh_at", ASCENDING)])
+    series_col.create_index([("fetched_at", ASCENDING)])
     # Additional indexes for performance
     from .db import get_logs_collection, get_jobs_collection, get_users_collection
     logs_col = get_logs_collection()
@@ -600,7 +597,10 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
             logging.info(f"Fetched product {asin}: {bool(product)}")
         return product
 
-    series_obj = asyncio.run(_load_product(series_asin))
+    try:
+        series_obj = run_coro_sync(_load_product(series_asin))
+    except Exception:
+        series_obj = None
     if not series_obj:
         if settings.debug_logging:
             logging.warning(f"No series object for {series_asin}")
@@ -615,7 +615,13 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
     if not parent_asin and (series_obj.get("content_delivery_type") == "BookSeries" or any(isinstance(r, dict) and r.get("relationship_to_product") == "child" for r in series_obj.get("relationships", []))):
         parent_asin = series_asin
 
-    parent_obj = series_obj if not parent_asin or parent_asin == series_asin else asyncio.run(_load_product(parent_asin))
+    if not parent_asin or parent_asin == series_asin:
+        parent_obj = series_obj
+    else:
+        try:
+            parent_obj = run_coro_sync(_load_product(parent_asin))
+        except Exception:
+            parent_obj = None
     if not parent_obj:
         if settings.debug_logging:
             logging.warning(f"No parent object for {series_asin}, parent_asin: {parent_asin}")
@@ -646,7 +652,10 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
         rel = entry.get("rel", {}) or {}
         if not child_asin:
             continue
-        child_obj = asyncio.run(_load_product(child_asin))
+        try:
+            child_obj = run_coro_sync(_load_product(child_asin))
+        except Exception:
+            child_obj = None
         if not child_obj:
             continue
         # Skip books with placeholder issue_date
@@ -668,7 +677,7 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
         # fetch image data and store
         book["image_url"] = book["image"]  # Store original URL for notifications
         try:
-            img_resp = requests.get(book["image"], timeout=10, proxies=proxies)
+            img_resp = _SESSION.get(book["image"], timeout=10, proxies=proxies)
             if img_resp.ok:
                 encoded = base64.b64encode(img_resp.content).decode("ascii")
                 ctype = img_resp.headers.get("Content-Type", "image/jpeg")
