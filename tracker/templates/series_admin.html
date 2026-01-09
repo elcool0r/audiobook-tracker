@@ -179,201 +179,149 @@ function render(list) {
     const actions = document.createElement('td');
     actions.className = 'text-end';
 
-    // Series-level ignore narrator change toggle (visible to admins when series has warnings or is currently ignored)
+    // Build a dropdown to contain per-row actions
+    const btnGroup = document.createElement('div');
+    btnGroup.className = 'btn-group';
+
+    const dropdownToggle = document.createElement('button');
+    dropdownToggle.className = 'btn btn-sm btn-outline-secondary dropdown-toggle';
+    dropdownToggle.type = 'button';
+    dropdownToggle.setAttribute('data-bs-toggle', 'dropdown');
+    dropdownToggle.setAttribute('aria-expanded', 'false');
+    dropdownToggle.textContent = 'Actions';
+
+    const dropdownMenu = document.createElement('ul');
+    dropdownMenu.className = 'dropdown-menu dropdown-menu-end';
+
+    function addMenuItem(text, onclick, opts) {
+      const li = document.createElement('li');
+      const btnItem = document.createElement('button');
+      btnItem.type = 'button';
+      btnItem.className = 'dropdown-item';
+      if (opts && opts.className) btnItem.classList.add(opts.className);
+      btnItem.textContent = text;
+      btnItem.onclick = onclick;
+      if (opts && opts.disabled) btnItem.disabled = true;
+      li.appendChild(btnItem);
+      dropdownMenu.appendChild(li);
+      return btnItem;
+    }
+
+    // Series-level ignore narrator change toggle
     if (s.asin && ((Array.isArray(s.narrator_warnings) && s.narrator_warnings.length > 0) || Boolean(s.ignore_narrator_warnings))) {
-      const ignoreSeriesBtn = document.createElement('button');
-      ignoreSeriesBtn.className = 'btn btn-sm ' + (s.ignore_narrator_warnings ? 'btn-outline-success' : 'btn-outline-secondary') + ' me-2';
-      ignoreSeriesBtn.textContent = s.ignore_narrator_warnings ? 'Unignore narrator changes' : 'Ignore narrator changes';
-      ignoreSeriesBtn.disabled = !s.asin;
-      ignoreSeriesBtn.onclick = async () => {
+      addMenuItem(s.ignore_narrator_warnings ? 'Unignore narrator changes' : 'Ignore narrator changes', async () => {
         if (!s.asin) return;
-        ignoreSeriesBtn.disabled = true;
         const desired = !Boolean(s.ignore_narrator_warnings);
-        ignoreSeriesBtn.textContent = desired ? 'Setting...' : 'Clearing...';
         try {
           const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(s.asin)}/ignore-narrator-series`), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ignore: desired }),
           });
-          if (!resp.ok) {
-            const txt = await resp.text();
-            throw new Error(txt || 'Failed');
-          }
+          if (!resp.ok) throw new Error(await resp.text() || 'Failed');
           const data = await resp.json();
           s.ignore_narrator_warnings = Boolean(data.ignore_narrator_warnings);
-          // Refresh list to pick up updated book flags and warnings
           loadSeries(currentPage);
-          return;
         } catch (err) {
           alert(err?.message || 'Failed to toggle series ignore');
-        } finally {
-          ignoreSeriesBtn.disabled = false;
         }
-      };
-      actions.appendChild(ignoreSeriesBtn);
+      });
     }
 
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-sm btn-outline-primary';
-    btn.textContent = 'Refresh books';
-    btn.onclick = async () => {
+    // Refresh books
+    addMenuItem('Refresh books', async () => {
+      const btn = event.currentTarget;
       btn.disabled = true; btn.textContent = 'Enqueued...';
-      const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(s.asin)}/refresh`), { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-      if (resp.ok) {
-        const data = await resp.json();
-        btn.textContent = 'Job: ' + (data.job_id || 'ok');
-      } else {
+      try {
+        const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(s.asin)}/refresh`), { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        if (resp.ok) {
+          const data = await resp.json();
+          btn.textContent = 'Job: ' + (data.job_id || 'ok');
+        } else {
+          btn.textContent = 'Error';
+        }
+      } catch (e) {
         btn.textContent = 'Error';
       }
       setTimeout(() => { btn.disabled = false; btn.textContent = 'Refresh books'; }, 3000);
-    };
-    actions.appendChild(btn);
-    
-    const renameBtn = document.createElement('button');
-    renameBtn.className = 'btn btn-sm btn-outline-secondary ms-2';
-    renameBtn.textContent = 'Rename title';
-    renameBtn.disabled = !s.asin;
-    renameBtn.onclick = async () => {
+    });
+
+    // Rename title
+    addMenuItem('Rename title', async () => {
       if (!s.asin) return;
       const currentTitle = s.title || '';
       const message = currentTitle ? `New display title for "${currentTitle}"?` : 'New display title for series?';
       const input = prompt(message, currentTitle);
       if (input === null) return;
       const trimmed = input.trim();
-      if (!trimmed) {
-        alert('Title cannot be empty');
-        return;
-      }
-      renameBtn.disabled = true;
-      renameBtn.textContent = 'Saving...';
-      const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(s.asin)}/title`), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: trimmed }),
-      });
-      if (resp.ok) {
-        await loadSeries();
-        return;
-      }
-      renameBtn.textContent = 'Error';
-      setTimeout(() => {
-        renameBtn.disabled = !s.asin;
-        renameBtn.textContent = 'Rename title';
-      }, 2000);
-    };
-    actions.appendChild(renameBtn);
-    
-
+      if (!trimmed) { alert('Title cannot be empty'); return; }
+      const btn = event.currentTarget;
+      btn.disabled = true; btn.textContent = 'Saving...';
+      try {
+        const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(s.asin)}/title`), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: trimmed })
+        });
+        if (resp.ok) { await loadSeries(); return; }
+        btn.textContent = 'Error';
+        setTimeout(() => { btn.disabled = !s.asin; btn.textContent = 'Rename title'; }, 2000);
+      } catch (err) { btn.textContent = 'Error'; setTimeout(() => { btn.disabled = !s.asin; btn.textContent = 'Rename title'; }, 2000); }
+    });
 
     if (developerControlsVisible && s.asin) {
-      const cloneBtn = document.createElement('button');
-      cloneBtn.className = 'btn btn-sm btn-outline-info ms-2';
-      cloneBtn.textContent = 'Duplicate';
-      cloneBtn.onclick = async () => {
+      addMenuItem('Duplicate', async () => {
         const suggested = `${s.asin}-dev-${Date.now()}`;
         const target = prompt('Enter mock ASIN for duplicate', suggested);
-        if (!target) {
-          return;
-        }
-        const trimmed = target.trim();
-        if (!trimmed) {
-          alert('ASIN cannot be empty');
-          return;
-        }
-        cloneBtn.disabled = true;
-        cloneBtn.textContent = 'Duplicating...';
+        if (!target) return; const trimmed = target.trim(); if (!trimmed) { alert('ASIN cannot be empty'); return; }
+        const btn = event.currentTarget; btn.disabled = true; btn.textContent = 'Duplicating...';
         try {
-          const resp = await fetch(apiPath(`/api/developer/series/${encodeURIComponent(s.asin)}/duplicate`), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ target_asin: trimmed }),
-          });
-          if (!resp.ok) {
-            const text = await resp.text();
-            throw new Error(text || 'Duplicate failed');
-          }
-          const data = await resp.json();
-          alert(`Series duplicated as ${data.asin}`);
-          loadSeries(currentPage);
-          return;
-        } catch (err) {
-          alert(err?.message || 'Failed to duplicate series');
-        } finally {
-          cloneBtn.disabled = false;
-          cloneBtn.textContent = 'Duplicate';
-        }
-      };
-      actions.appendChild(cloneBtn);
+          const resp = await fetch(apiPath(`/api/developer/series/${encodeURIComponent(s.asin)}/duplicate`), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_asin: trimmed }) });
+          if (!resp.ok) throw new Error(await resp.text() || 'Duplicate failed');
+          const data = await resp.json(); alert(`Series duplicated as ${data.asin}`); loadSeries(currentPage);
+        } catch (err) { alert(err?.message || 'Failed to duplicate series'); }
+        finally { btn.disabled = false; btn.textContent = 'Duplicate'; }
+      });
 
-      const probeBtn = document.createElement('button');
-      probeBtn.className = 'btn btn-sm btn-outline-warning ms-2';
-      probeBtn.textContent = 'Probe now';
-      probeBtn.onclick = async () => {
-        probeBtn.disabled = true;
-        const savedText = probeBtn.textContent;
-        probeBtn.textContent = 'Scheduling...';
+      addMenuItem('Probe now', async () => {
+        const btn = event.currentTarget; btn.disabled = true; btn.textContent = 'Scheduling...';
         try {
-          const resp = await fetch(apiPath(`/api/developer/series/${encodeURIComponent(s.asin)}/probe`), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-          });
-          if (resp.ok) {
-            const data = await resp.json();
-            probeBtn.textContent = data.job_id ? `Job ${data.job_id}` : 'Queued';
-          } else {
-            const text = await resp.text();
-            probeBtn.textContent = 'Error';
-            alert(text || 'Failed to schedule probe');
-          }
-        } catch (err) {
-          probeBtn.textContent = 'Error';
-          alert(err?.message || 'Failed to schedule probe');
-        } finally {
-          setTimeout(() => {
-            probeBtn.disabled = false;
-            probeBtn.textContent = 'Probe now';
-          }, 3000);
-        }
-      };
-      actions.appendChild(probeBtn);
+          const resp = await fetch(apiPath(`/api/developer/series/${encodeURIComponent(s.asin)}/probe`), { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+          if (resp.ok) { const data = await resp.json(); btn.textContent = data.job_id ? `Job ${data.job_id}` : 'Queued'; }
+          else { const text = await resp.text(); btn.textContent = 'Error'; alert(text || 'Failed to schedule probe'); }
+        } catch (err) { btn.textContent = 'Error'; alert(err?.message || 'Failed to schedule probe'); }
+        finally { setTimeout(() => { btn.disabled = false; btn.textContent = 'Probe now'; }, 3000); }
+      });
     }
-    
-    
-    const delBtn = document.createElement('button');
-    delBtn.className = 'btn btn-sm btn-outline-danger ms-2 two-step-confirm';
-    delBtn.textContent = 'Delete';
-    delBtn.onclick = async () => {
-      // Two-step confirm without browser alert
-      if (delBtn.dataset.confirmed !== 'true') {
-        delBtn.dataset.confirmed = 'true';
-        delBtn.textContent = 'Confirm';
-        delBtn.classList.remove('btn-outline-danger');
-        delBtn.classList.add('btn-danger');
+
+    // Delete (two-step confirm)
+    addMenuItem('Delete', async (event) => {
+      // Prevent dropdown from auto-closing so the user can confirm
+      try { event.stopPropagation(); } catch (e) {}
+      const btn = event.currentTarget;
+      if (btn.dataset.confirmed !== 'true') {
+        btn.dataset.confirmed = 'true';
+        btn.textContent = 'Confirm';
+        btn.classList.add('text-danger');
+        // keep dropdown-item class for consistent styling
         setTimeout(() => {
-          if (delBtn.dataset.confirmed === 'true') {
-            delBtn.dataset.confirmed = '';
-            delBtn.textContent = 'Delete';
-            delBtn.classList.add('btn-outline-danger');
-            delBtn.classList.remove('btn-danger');
+          if (btn.dataset.confirmed === 'true') {
+            btn.dataset.confirmed = '';
+            btn.textContent = 'Delete';
+            btn.classList.remove('text-danger');
           }
         }, 3000);
         return;
       }
-      delBtn.disabled = true;
-      delBtn.textContent = 'Deleting...';
-      const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(s.asin)}`), { method: 'DELETE' });
-      if (resp.ok) {
-        await loadSeries();
-      } else {
-        delBtn.textContent = 'Error';
-        setTimeout(() => { delBtn.disabled = false; delBtn.textContent = 'Delete'; }, 3000);
-      }
-    };
-    actions.appendChild(delBtn);
+      btn.disabled = true; btn.textContent = 'Deleting...';
+      try {
+        const resp = await fetch(apiPath(`/api/series/${encodeURIComponent(s.asin)}`), { method: 'DELETE' });
+        if (resp.ok) { await loadSeries(); }
+        else { btn.textContent = 'Error'; setTimeout(() => { btn.disabled = false; btn.textContent = 'Delete'; }, 3000); }
+      } catch (err) { btn.textContent = 'Error'; setTimeout(() => { btn.disabled = false; btn.textContent = 'Delete'; }, 3000); }
+    });
 
-
-    
+    btnGroup.appendChild(dropdownToggle);
+    btnGroup.appendChild(dropdownMenu);
+    actions.appendChild(btnGroup);
     tr.appendChild(actions);
     tbody.appendChild(tr);
   });
