@@ -749,6 +749,8 @@ class TaskWorker:
             if not isinstance(books, list) or not books:
                 continue
 
+            narrator_warnings = compute_narrator_warnings(books, asin)
+
             def _is_visible(book: Dict[str, Any] | None) -> bool:
                 return bool(book and not is_book_hidden(book))
 
@@ -789,6 +791,8 @@ class TaskWorker:
             if pending_asins and initialized:
                 titles = [book_map[a].get("title") or a for a in pending_asins if a in book_map]
                 body = f"New audiobooks found in '{series_title}':\n- " + "\n- ".join(titles)
+                if narrator_warnings:
+                    body += "\n\nNote: Narrator changes detected for this book."
                 apprise_error = None
                 try:
                     import apprise
@@ -867,6 +871,8 @@ class TaskWorker:
             if asin_val:
                 book_map[asin_val] = b
 
+        narrator_warnings = compute_narrator_warnings(books_current, asin)
+
         # Release candidates: publication_datetime (exact UTC) or release_date fallback
         # Only include books published within ±1 day to avoid stale notifications for months-old releases
         now = _now_dt()
@@ -916,6 +922,8 @@ class TaskWorker:
                 attachments = [book_map[a].get("image_url") for a in to_send if a in book_map and book_map[a].get("image_url")]
                 if titles:
                     body = f"New audiobooks found in '{series_title}':\n- " + "\n- ".join(titles)
+                    if narrator_warnings:
+                        body += "\n\nNote: Narrator changes detected in this series."
                     to_send_msgs.append(("New Audiobook(s)", body, to_send, attachments))
 
             # Release notifications on the configured release day
