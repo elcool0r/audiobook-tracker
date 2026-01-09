@@ -287,10 +287,12 @@ form.addEventListener('submit', async (ev) => {
   }
 });
 
-document.getElementById('proxyEnabledToggle').addEventListener('change', syncProxyFields);
+const proxyEnabledToggle = document.getElementById('proxyEnabledToggle');
+if (proxyEnabledToggle) proxyEnabledToggle.addEventListener('change', syncProxyFields);
 syncProxyFields();
 
-document.getElementById('testProxyBtn').addEventListener('click', async () => {
+const testProxyBtn = document.getElementById('testProxyBtn');
+if (testProxyBtn) testProxyBtn.addEventListener('click', async () => {
   const btn = document.getElementById('testProxyBtn');
   const resultDiv = document.getElementById('proxyTestResult');
   
@@ -321,7 +323,8 @@ document.getElementById('testProxyBtn').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('assignScheduleBtn').addEventListener('click', async () => {
+const assignScheduleBtn = document.getElementById('assignScheduleBtn');
+if (assignScheduleBtn) assignScheduleBtn.addEventListener('click', async () => {
   const btn = document.getElementById('assignScheduleBtn');
   const resultDiv = document.getElementById('rescheduleResult');
   
@@ -369,8 +372,11 @@ document.getElementById('assignScheduleBtn').addEventListener('click', async () 
   }
 });
 
+});
+
 // Refresh All now handler
-document.getElementById('refreshAllBtn').addEventListener('click', async () => {
+const refreshAllBtn = document.getElementById('refreshAllBtn');
+if (refreshAllBtn) refreshAllBtn.addEventListener('click', async () => {
   const btn = document.getElementById('refreshAllBtn');
   const resultDiv = document.getElementById('rescheduleResult');
   
@@ -418,7 +424,8 @@ document.getElementById('refreshAllBtn').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('showDbStatsBtn').addEventListener('click', async () => {
+const showDbStatsBtn = document.getElementById('showDbStatsBtn');
+if (showDbStatsBtn) showDbStatsBtn.addEventListener('click', async () => {
   const btn = document.getElementById('showDbStatsBtn');
   const resultDiv = document.getElementById('dbStatsResult');
   
@@ -480,7 +487,8 @@ document.getElementById('showDbStatsBtn').addEventListener('click', async () => 
   }
 });
 
-document.getElementById('purgeAndCompactBtn').addEventListener('click', async () => {
+const purgeAndCompactBtn = document.getElementById('purgeAndCompactBtn');
+if (purgeAndCompactBtn) purgeAndCompactBtn.addEventListener('click', async () => {
   const btn = document.getElementById('purgeAndCompactBtn');
   const resultDiv = document.getElementById('purgeResult');
   
@@ -533,7 +541,8 @@ document.getElementById('purgeAndCompactBtn').addEventListener('click', async ()
   }
 });
 
-document.getElementById('dumpRestoreBtn').addEventListener('click', async () => {
+const dumpRestoreBtn = document.getElementById('dumpRestoreBtn');
+if (dumpRestoreBtn) dumpRestoreBtn.addEventListener('click', async () => {
   const btn = document.getElementById('dumpRestoreBtn');
   const resultDiv = document.getElementById('dumpRestoreResult');
   
