@@ -88,7 +88,6 @@ html[data-bs-theme="dark"],
 		height: auto;
 		border-radius: 0;
 		-webkit-user-drag: none; /* Safari/Chrome */
-		user-drag: none;
 		-webkit-user-select: none;
 		user-select: none;
 } 

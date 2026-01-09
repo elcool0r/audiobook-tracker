@@ -32,6 +32,7 @@
   </div>
 {% endif %}
   
+{% if settings.developer_mode %}
   <div class="card mb-3">
     <div class="card-header">API Settings</div>
     <div class="card-body">
@@ -49,15 +50,14 @@
         <label class="form-check-label" for="skipKnownSeriesSearchToggle">Skip series search when the title is already known</label>
         <div class="form-text">When enabled, searching for an exact known title returns a shortcut response instead of querying Audible.</div>
       </div>
-{% if settings.developer_mode %}
       <div class="form-check form-switch">
         <input class="form-check-input" type="checkbox" name="debug_logging" id="debugLoggingToggle" {% if settings.debug_logging %}checked{% endif %} />
         <label class="form-check-label" for="debugLoggingToggle">Enable debug logging</label>
         <div class="form-text">Enable detailed logging for troubleshooting. Requires app restart to take effect.</div>
       </div>
-{% endif %}
     </div>
   </div>
+{% endif %}
 
 
 

@@ -25,11 +25,14 @@
   </div>
 </div>
 <div id="seriesList"></div>
+<script type="application/json" id="user-date-format">"{{ user.date_format or 'iso' }}"</script>
+<script type="application/json" id="developer-mode-enabled">{{ 'true' if settings.developer_mode else 'false' }}</script>
+<script type="application/json" id="is-admin">{{ 'true' if user.role == 'admin' else 'false' }}</script>
 <script>
 let allSeries = [];
-const userDateFormat = "{{ user.date_format or 'iso' }}";
-const developerModeEnabled = {{ 'true' if settings.developer_mode else 'false' }};
-const developerControlsVisible = developerModeEnabled && {{ 'true' if user.role == 'admin' else 'false' }};
+const userDateFormat = JSON.parse(document.getElementById('user-date-format').textContent);
+const developerModeEnabled = JSON.parse(document.getElementById('developer-mode-enabled').textContent);
+const developerControlsVisible = developerModeEnabled && JSON.parse(document.getElementById('is-admin').textContent);
 let currentPage = 1;
 let totalSeries = 0;
 let totalPages = 1;
@@ -129,7 +132,7 @@ function render(list) {
     headerRow.appendChild(th);
   });
   const actionsHeader = document.createElement('th');
-  actionsHeader.textContent = 'Actions';
+  actionsHeader.textContent = '';
   actionsHeader.scope = 'col';
   actionsHeader.className = 'text-end';
   headerRow.appendChild(actionsHeader);

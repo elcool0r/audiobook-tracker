@@ -9,7 +9,7 @@
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   gtag('js', new Date());
-  gtag('config', {{ settings.google_analytics_id|tojson }});
+  gtag('config', '{{ settings.google_analytics_id }}');
 </script>
 {% endif %}
   <div class="row mb-4">

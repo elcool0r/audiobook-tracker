@@ -13,9 +13,11 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script type="application/json" id="developer-mode-enabled">{{ 'true' if settings.developer_mode else 'false' }}</script>
+<script type="application/json" id="is-admin">{{ 'true' if user.role == 'admin' else 'false' }}</script>
 <script>
-const developerModeEnabled = {{ 'true' if settings.developer_mode else 'false' }};
-const isAdminUser = {{ 'true' if user.role == 'admin' else 'false' }};
+const developerModeEnabled = JSON.parse(document.getElementById('developer-mode-enabled').textContent);
+const isAdminUser = JSON.parse(document.getElementById('is-admin').textContent);
 const showDeveloperControls = developerModeEnabled && isAdminUser;
 async function loadSeries() {
   const params = new URLSearchParams(window.location.search);
