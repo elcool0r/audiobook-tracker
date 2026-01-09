@@ -14,7 +14,7 @@
 {% endif %}
   <div class="row mb-4">
     <div class="col">
-      <h3 class="mb-3 text-center">Upcoming Releases</h3>
+      <h3 class="mb-3 text-center text-md-center text-start">Upcoming Releases</h3>
       {% if upcoming and upcoming|length > 0 %}
         <div class="upcoming-scroll">
           <div class="row row-cols-1 row-cols-sm-2 row-cols-md-4 g-3 {% if upcoming|length < 4 %}justify-content-center{% endif %}">
@@ -54,7 +54,7 @@
 
   <div class="row mb-4">
     <div class="col">
-      <h3 class="mb-3 text-center">Latest Releases</h3>
+      <h3 class="mb-3 text-center text-md-center text-start">Latest Releases</h3>
       {% if latest and latest|length > 0 %}
         <div class="latest-scroll">
           <div class="row row-cols-1 row-cols-sm-2 row-cols-md-4 g-3 {% if latest|length < 4 %}justify-content-center{% endif %}">
