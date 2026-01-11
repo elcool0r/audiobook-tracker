@@ -228,6 +228,18 @@ html[data-bs-theme="dark"],
 	margin-right: 0.4rem;
 }
 
+/* Info icon shown when narrator-change ignore is enabled */
+.all-series-table td.series-col .ignore-narrator-icon {
+	font-size: 0.95rem;
+	vertical-align: middle;
+	line-height: 1;
+	opacity: 0.95;
+	cursor: default;
+}
+.all-series-table td.series-col .ignore-narrator-icon:hover {
+	opacity: 1;
+}
+
 /* Upcoming column: next release */
 .all-series-table td.next-release-col {
 	white-space: nowrap;

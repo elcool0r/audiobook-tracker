@@ -150,7 +150,16 @@ function render(list) {
       a.href = (window.BASE_PATH || '') + '/series-books?asin=' + encodeURIComponent(s.asin);
       a.textContent = s.title || '(untitled)';
       urlCell.appendChild(a);
-    } else {
+      // Show info icon when narrator-change ignore is enabled for this series
+      if (s.ignore_narrator_warnings) {
+        const info = document.createElement('span');
+        info.className = 'ms-2 text-info ignore-narrator-icon';
+        info.setAttribute('data-bs-toggle', 'tooltip');
+        info.setAttribute('data-bs-placement', 'right');
+        info.setAttribute('title', 'Narrator change detection is ignored for this series. Warnings and automated narrator changes will be suppressed.');
+        info.textContent = 'ℹ';
+        urlCell.appendChild(info);
+      }    } else {
       urlCell.textContent = s.title || '(untitled)';
     }
     urlCell.style.overflow = 'hidden';
