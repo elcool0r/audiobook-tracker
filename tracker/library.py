@@ -202,7 +202,8 @@ def ensure_series_document(asin: str, title: Optional[str], url: Optional[str]) 
         if update:
             update["updated_at"] = now
             series_col.update_one({"_id": asin}, {"$set": update})
-        existing = series_col.find_one({"_id": asin})
+            # Re-fetch to get updated document
+            existing = series_col.find_one({"_id": asin})
         return _series_payload(existing), False
     doc = {
         "_id": asin,
@@ -695,56 +696,4 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
     return filtered_books, parent_obj if isinstance(parent_obj, dict) else None, parent_asin or series_asin
 
 
-def rebuild_series_user_counts():
-    """Rebuild user counts for all series based on current library entries."""
-    series_col = get_series_collection()
-    lib_col = get_user_library_collection()
-    
-    # Reset all to 0
-    series_col.update_many({}, {"$set": {"user_count": 0}})
-    
-    # Count from library
-    counts = {}
-    for doc in lib_col.aggregate([
-        {"$match": {"series_asin": {"$exists": True}}},
-        {"$group": {"_id": "$series_asin", "cnt": {"$sum": 1}}}
-    ]):
-        counts[doc["_id"]] = doc.get("cnt", 0)
-    
-    # Update counts
-    for asin, cnt in counts.items():
-        series_col.update_one({"_id": asin}, {"$set": {"user_count": cnt}})
-
-
-def ensure_indexes():
-    """Ensure necessary indexes exist."""
-    series_col = get_series_collection()
-    lib_col = get_user_library_collection()
-    users_col = get_users_collection()
-    jobs_col = get_jobs_collection()
-    
-    # Series indexes
-    series_col.create_index("title")
-    series_col.create_index("next_refresh_at")
-    # Index for frontpage narrator warnings query
-    series_col.create_index("narrator_warnings")
-    # Compound index for series lookups with publication data
-    series_col.create_index([("books.asin", 1), ("books.publication_datetime", 1)])
-    series_col.create_index([("books.raw.asin", 1), ("books.raw.publication_datetime", 1)])
-    
-    # Library indexes
-    lib_col.create_index("username")
-    lib_col.create_index("series_asin")
-    # Compound index for user library queries - most important for frontpage performance
-    lib_col.create_index([("username", 1), ("series_asin", 1)])
-    
-    # Users indexes
-    users_col.create_index([("username", 1)], unique=True)
-    users_col.create_index([("frontpage_slug", 1)], unique=True, sparse=True)
-    lib_col.create_index([("username", ASCENDING), ("series_asin", ASCENDING)])
-    
-    # Users indexes
-    users_col.create_index("username", unique=True)
-    users_col.create_index("frontpage_slug", unique=True, sparse=True)
-    
-    # Jobs indexes
+# End of library.py

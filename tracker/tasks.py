@@ -897,11 +897,20 @@ class TaskWorker:
 
         job_recorded = False
         ops: list[UpdateOne] = []
-        for entry in lib_col.find({"series_asin": asin}):
+
+        # Batch-fetch all users to avoid N+1 queries
+        entries = list(lib_col.find({"series_asin": asin}))
+        if entries:
+            usernames = [e.get("username") for e in entries if e.get("username")]
+            user_docs = {doc["username"]: doc for doc in users_col.find({"username": {"$in": usernames}})} if usernames else {}
+        else:
+            user_docs = {}
+
+        for entry in entries:
             username = entry.get("username")
             if not username:
                 continue
-            user_doc = users_col.find_one({"username": username}) or {}
+            user_doc = user_docs.get(username) or {}
             notif = user_doc.get("notifications", {})
             enabled = bool(notif.get("enabled", False))
             urls = [u for u in notif.get("urls", []) if isinstance(u, str) and u.strip()]
