@@ -230,7 +230,8 @@ async def api_test_proxy(user=Depends(get_current_user)):
     proxies = _build_proxies(settings)
     import requests
     try:
-        response = requests.get("https://www.audible.com", proxies=proxies, timeout=10)
+        from lib.audible_api_search import _SESSION
+        response = _SESSION.get("https://www.audible.com", proxies=proxies, timeout=10)
         if response.status_code == 200:
             return {"success": True, "message": f"Proxy connection successful (status: {response.status_code})"}
         return {"success": False, "error": f"Unexpected status code: {response.status_code}"}
@@ -1141,11 +1142,11 @@ def _select_cover_image(books: list | None) -> str | None:
 @api_router.get("/users")
 async def api_list_users(user=Depends(get_current_user)):
     _require_admin(user)
-    users = list(get_users_collection().find({}, {"_id": 0}))
-    counts = {}
+    users_col = get_users_collection()
     col = get_user_library_collection()
-    for u in users:
-        counts[u["username"]] = col.count_documents({"username": u["username"]})
+    users = list(users_col.find({}, {"_id": 0}))
+    # Aggregate library counts by username in a single DB call
+    counts = {doc["_id"]: doc.get("count", 0) for doc in col.aggregate([{"$group": {"_id": "$username", "count": {"$sum": 1}}}])}
     for u in users:
         u["library_count"] = counts.get(u["username"], 0)
     return users

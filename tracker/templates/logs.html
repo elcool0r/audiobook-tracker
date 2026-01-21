@@ -7,19 +7,20 @@
   <span class="ms-3 small text-muted">Showing last 100 logs</span>
 </div>
 <div id="logsTable"></div>
+<script type="application/json" id="logs-data">{{ logs | tojson }}</script>
 <script>
-let logs = {{ logs | tojson }};
+const logsData = JSON.parse(document.getElementById('logs-data').textContent);
 
 function render() {
   const container = document.getElementById('logsTable');
   container.innerHTML = '';
-  if (!logs.length) { container.innerHTML = '<div class="alert alert-info">No logs yet.</div>'; return; }
+  if (!logsData.length) { container.innerHTML = '<div class="alert alert-info">No logs yet.</div>'; return; }
 
   const table = document.createElement('table');
   table.className = 'table table-sm table-striped';
   table.innerHTML = '<thead><tr><th>Timestamp</th><th>Event</th><th>Username</th><th>IP</th><th>User-Agent</th><th>Details</th></tr></thead>';
   const tbody = document.createElement('tbody');
-  logs.forEach(l => {
+  logsData.forEach(l => {
     const tr = document.createElement('tr');
     const timestamp = new Date(l.timestamp).toLocaleString();
     tr.innerHTML = `<td>${timestamp}</td><td>${l.event}</td><td>${l.username}</td><td>${l.ip}</td><td>${l.user_agent || ''}</td><td>${l.details || ''}</td>`;

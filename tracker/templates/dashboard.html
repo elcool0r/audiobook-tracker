@@ -15,7 +15,7 @@
           <div class="mb-3">
             <input class="form-control" name="num_results" placeholder="Num results (optional)" />
           </div>
-          <button class="btn btn-primary">Search</button>
+          <button type="submit" class="btn btn-primary">Search</button>
         </form>
       </div>
     </div>
@@ -44,11 +44,24 @@ fetchSettings();
 document.getElementById('searchForm').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const form = ev.target;
-  const title = form.title.value;
-  const num = form.num_results.value ? parseInt(form.num_results.value,10) : undefined;
-  const r = await fetch(apiPath('/api/search'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({title: title, num_results: num})});
-  const j = await r.json();
-  document.getElementById('results').innerText = JSON.stringify(j, null, 2);
+  const submitBtn = form.querySelector('button[type="submit"]');
+  const originalLabel = submitBtn ? submitBtn.textContent : null;
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Searching...';
+  }
+  try {
+    const title = form.title.value;
+    const num = form.num_results.value ? parseInt(form.num_results.value,10) : undefined;
+    const r = await fetch(apiPath('/api/search'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({title: title, num_results: num})});
+    const j = await r.json();
+    document.getElementById('results').innerText = JSON.stringify(j, null, 2);
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalLabel || 'Search';
+    }
+  }
 });
 </script>
 </div>

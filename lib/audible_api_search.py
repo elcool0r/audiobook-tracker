@@ -27,6 +27,8 @@ import asyncio
 import functools
 
 import requests
+from requests.adapters import HTTPAdapter
+from cachetools import TTLCache
 import shlex
 import threading
 from prometheus_client import Counter
@@ -55,10 +57,50 @@ _min_interval = 0.5
 # Prometheus counter for Audible API calls
 audible_api_calls = Counter('audible_api_calls_total', 'Total number of calls to Audible API')
 
-# In-memory cache for API responses (simple TTL cache)
-_cache: Dict[str, Dict[str, Any]] = {}
-_cache_lock = threading.Lock()
+# In-memory cache for API responses (bounded TTL LRU cache)
 CACHE_TTL = 3600  # 1 hour
+_cache_lock = threading.Lock()
+# Bounded TTL cache to prevent unbounded memory growth
+_cache: TTLCache = TTLCache(maxsize=2000, ttl=CACHE_TTL)
+
+# Shared requests.Session for connection pooling and keep-alive
+_SESSION = requests.Session()
+_SESSION.mount("https://", HTTPAdapter(pool_connections=10, pool_maxsize=20))
+_SESSION.mount("http://", HTTPAdapter(pool_connections=10, pool_maxsize=20))
+
+# Background asyncio event loop used for running coroutines from synchronous code
+_BG_LOOP: Optional[asyncio.AbstractEventLoop] = None
+_BG_THREAD: Optional[threading.Thread] = None
+
+
+def _start_background_loop() -> None:
+    """Start a dedicated background asyncio event loop in a thread."""
+    global _BG_LOOP, _BG_THREAD
+    if _BG_LOOP and _BG_THREAD and _BG_THREAD.is_alive():
+        return
+    loop = asyncio.new_event_loop()
+
+    def _run_loop() -> None:
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    t = threading.Thread(target=_run_loop, daemon=True)
+    t.start()
+    _BG_LOOP = loop
+    _BG_THREAD = t
+
+
+def run_coro_sync(coro: asyncio.coroutines, timeout: float | None = None):
+    """Run an awaitable on the background event loop and return its result synchronously.
+
+    If the background loop is not started, this function starts it.
+    """
+    _start_background_loop()
+    if _BG_LOOP is None:
+        # Fallback: run directly (shouldn't normally happen)
+        return asyncio.run(coro)
+    future = asyncio.run_coroutine_threadsafe(coro, _BG_LOOP)
+    return future.result(timeout=timeout)
 
 
 def _get_cache_key(func_name: str, **kwargs) -> str:
@@ -72,18 +114,19 @@ def _get_cache_key(func_name: str, **kwargs) -> str:
 
 def _get_cached_response(cache_key: str) -> Optional[Dict[str, Any]]:
     with _cache_lock:
-        if cache_key in _cache:
-            entry = _cache[cache_key]
-            if time.time() - entry['timestamp'] < CACHE_TTL:
-                return entry['data']
-            else:
-                del _cache[cache_key]
-    return None
+        try:
+            return _cache[cache_key]
+        except KeyError:
+            return None
 
 
 def _set_cached_response(cache_key: str, data: Dict[str, Any]) -> None:
     with _cache_lock:
-        _cache[cache_key] = {'data': data, 'timestamp': time.time()}
+        try:
+            _cache[cache_key] = data
+        except Exception:
+            # If cache is full or an unexpected error occurs, skip caching
+            pass
 
 
 def set_rate(rps: float) -> None:
@@ -108,7 +151,8 @@ async def api_get(url: str, headers: Optional[Dict[str, str]] = None, params: Op
         if wait > 0:
             await asyncio.sleep(wait)
         try:
-            resp = await asyncio.to_thread(requests.get, url, headers=headers, params=params, timeout=timeout, proxies=proxies)
+            # Use shared session to improve connection reuse
+            resp = await asyncio.to_thread(_SESSION.get, url, headers=headers, params=params, timeout=timeout, proxies=proxies)
             _last_request_time = time.monotonic()
             # Increment counter for Audible API calls
             if url.startswith(BASE_URL):

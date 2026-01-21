@@ -20,7 +20,7 @@
             <input class="form-control" name="query" placeholder="Series name" required />
             <textarea class="form-control d-none" name="bulkQuery" id="bulkQuery" rows="4" placeholder="Enter multiple series names, one per line or comma-separated"></textarea>
           </div>
-          <button class="btn btn-primary">Search</button>
+          <button type="submit" class="btn btn-primary">Search</button>
         </form>
         <div id="bulkSortControls" class="d-none mt-2">
           <div class="btn-group btn-group-sm" role="group" aria-label="Sort bulk search results">
@@ -630,15 +630,37 @@ function renderBulkResults(page = 1) {
     prevLi.appendChild(prevA);
     ul.appendChild(prevLi);
 
-    for (let i = 1; i <= totalPages; i++) {
+    // Generate page numbers with ellipsis
+    let pages = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (currentPage > 4) pages.push('...');
+      let start = Math.max(2, currentPage - 1);
+      let end = Math.min(totalPages - 1, currentPage + 1);
+      for (let i = start; i <= end; i++) pages.push(i);
+      if (currentPage < totalPages - 3) pages.push('...');
+      if (totalPages > 1) pages.push(totalPages);
+    }
+
+    for (let p of pages) {
       const li = document.createElement('li');
-      li.className = 'page-item' + (i === currentPage ? ' active' : '');
-      const a = document.createElement('a');
-      a.className = 'page-link';
-      a.href = '#';
-      a.textContent = i;
-      a.onclick = (e) => { e.preventDefault(); renderBulkResults(i); };
-      li.appendChild(a);
+      if (p === '...') {
+        li.className = 'page-item disabled';
+        const span = document.createElement('span');
+        span.className = 'page-link';
+        span.textContent = '...';
+        li.appendChild(span);
+      } else {
+        li.className = 'page-item' + (p === currentPage ? ' active' : '');
+        const a = document.createElement('a');
+        a.className = 'page-link';
+        a.href = '#';
+        a.textContent = p;
+        a.onclick = (e) => { e.preventDefault(); renderBulkResults(p); };
+        li.appendChild(a);
+      }
       ul.appendChild(li);
     }
 
@@ -814,15 +836,37 @@ async function loadKnownSeries() {
       prevLi.appendChild(prevA);
       ul.appendChild(prevLi);
 
-      for (let i = 1; i <= totalPages; i++) {
+      // Generate page numbers with ellipsis
+      let pages = [];
+      if (totalPages <= 7) {
+        for (let i = 1; i <= totalPages; i++) pages.push(i);
+      } else {
+        pages.push(1);
+        if (currentPage > 4) pages.push('...');
+        let start = Math.max(2, currentPage - 1);
+        let end = Math.min(totalPages - 1, currentPage + 1);
+        for (let i = start; i <= end; i++) pages.push(i);
+        if (currentPage < totalPages - 3) pages.push('...');
+        if (totalPages > 1) pages.push(totalPages);
+      }
+
+      for (let p of pages) {
         const li = document.createElement('li');
-        li.className = 'page-item' + (i === currentPage ? ' active' : '');
-        const a = document.createElement('a');
-        a.className = 'page-link';
-        a.href = '#';
-        a.textContent = i;
-        a.onclick = (e) => { e.preventDefault(); renderSeries(i); };
-        li.appendChild(a);
+        if (p === '...') {
+          li.className = 'page-item disabled';
+          const span = document.createElement('span');
+          span.className = 'page-link';
+          span.textContent = '...';
+          li.appendChild(span);
+        } else {
+          li.className = 'page-item' + (p === currentPage ? ' active' : '');
+          const a = document.createElement('a');
+          a.className = 'page-link';
+          a.href = '#';
+          a.textContent = p;
+          a.onclick = (e) => { e.preventDefault(); renderSeries(p); };
+          li.appendChild(a);
+        }
         ul.appendChild(li);
       }
 

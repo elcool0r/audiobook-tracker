@@ -88,7 +88,6 @@ html[data-bs-theme="dark"],
 		height: auto;
 		border-radius: 0;
 		-webkit-user-drag: none; /* Safari/Chrome */
-		user-drag: none;
 		-webkit-user-select: none;
 		user-select: none;
 } 
@@ -229,6 +228,18 @@ html[data-bs-theme="dark"],
 	margin-right: 0.4rem;
 }
 
+/* Info icon shown when narrator-change ignore is enabled */
+.all-series-table td.series-col .ignore-narrator-icon {
+	font-size: 0.95rem;
+	vertical-align: middle;
+	line-height: 1;
+	opacity: 0.95;
+	cursor: default;
+}
+.all-series-table td.series-col .ignore-narrator-icon:hover {
+	opacity: 1;
+}
+
 /* Upcoming column: next release */
 .all-series-table td.next-release-col {
 	white-space: nowrap;
@@ -278,19 +289,6 @@ html[data-bs-theme="dark"],
 	.latest-scroll .row.justify-content-center { justify-content: flex-start !important; }
 } 
 
-@media (max-width: 575.98px) {
-	.all-series-table .series-col .series-link {
-		white-space: normal;
-		text-overflow: unset;
-		overflow-wrap: anywhere;
-		display: inline; /* ensure icon stays attached to the title and does not get clipped */
-		vertical-align: middle;
-		line-height: 1;
-	}
-	.all-series-table .series-col {
-		padding-right: 0.5rem;
-	}
-}
 
 /* Mobile config tweaks: tighter card padding, full-width primary actions */
 @media (max-width: 575.98px) {
@@ -304,18 +302,6 @@ html[data-bs-theme="dark"],
 	.card .card-body .mb-3 { margin-bottom: 0.5rem !important; }
 }
 
-@media (max-width: 575.98px) {
-	.all-series-table { min-width: 100%; font-size: 0.92rem; }
-	.all-series-table th,
-	.all-series-table td { padding: 0.5rem 0.6rem; }
-	.all-series-table td.books-col,
-	.all-series-table td.last-release-col,
-	.all-series-table td.duration-col { padding-right: 0.75rem; }
-	.all-series-table-wrapper {
-		padding-left: 0.75rem;
-		padding-right: 0.75rem;
-	}
-}
 
 /* Two-step confirm buttons: reserve width to avoid layout shift when label changes */
 .two-step-confirm {
@@ -345,30 +331,32 @@ html[data-bs-theme="dark"],
 /* Mobile table adjustments */
 @media (max-width: 767px) {
   .all-series-table .series-col {
-    white-space: normal !important;
-    overflow: visible !important;
-    text-overflow: clip !important;
-    word-wrap: break-word;
-    hyphens: auto;
-    max-width: 35% !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: none;
   }
   .all-series-table .series-link {
-    display: inline !important;
-    font-size: 0.8rem !important;
+    display: inline-block;
+    font-size: 0.95rem;
+    max-width: calc(100% - 1.5rem);
   }
   .all-series-table-wrapper {
-    overflow-x: visible !important;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -0.75rem;
+    padding: 0 0.75rem;
   }
   .all-series-table {
-    width: 100% !important;
-    min-width: auto !important;
-    font-size: 0.8rem !important;
+    width: 100%;
+    min-width: auto;
+    font-size: 0.95rem;
   }
   .all-series-table td, .all-series-table th {
-    padding: 0.2rem 0.3rem !important;
+    padding: 0.55rem 0.65rem;
   }
   .all-series-table .books-col, .all-series-table .duration-col {
-    min-width: 40px !important;
+    min-width: auto;
   }
 }
 
