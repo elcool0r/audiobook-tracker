@@ -59,7 +59,30 @@
   </div>
 {% endif %}
 
-
+{% if user.role == 'admin' %}
+  <div class="card mb-3">
+    <div class="card-header">Audiobookshelf</div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-7">
+          <label class="form-label" for="audiobookshelfHost">Host</label>
+          <input class="form-control" id="audiobookshelfHost" type="url" placeholder="https://audiobookshelf.example.com" autocomplete="url" />
+        </div>
+        <div class="col-md-5">
+          <label class="form-label" for="audiobookshelfApiToken">API token</label>
+          <input class="form-control" id="audiobookshelfApiToken" type="password" autocomplete="new-password" data-bwignore="true" />
+          <div class="form-text" id="audiobookshelfTokenHelp">Enter a token to connect.</div>
+        </div>
+      </div>
+      <div class="mt-3 d-flex gap-2">
+        <button type="button" class="btn btn-sm btn-outline-primary" id="testAudiobookshelfBtn">Connect / Test</button>
+        <button type="button" class="btn btn-sm btn-outline-danger" id="removeAudiobookshelfBtn">Remove instance</button>
+      </div>
+      <div id="audiobookshelfStatus" class="mt-3" style="display:none" role="status"></div>
+      <div id="audiobookshelfLibraries" class="mt-3"></div>
+    </div>
+  </div>
+{% endif %}
 
   <div class="card mb-3">
     <div class="card-header">Proxy Settings</div>
@@ -209,6 +232,50 @@ function syncInactiveSeriesFields() {
     el.disabled = !toggle.checked;
   });
 }
+function renderAudiobookshelfLibraries(libraries, selectedIds) {
+  const container = document.getElementById('audiobookshelfLibraries');
+  if (!container) return;
+  container.replaceChildren();
+  if (!libraries || !libraries.length) {
+    const message = document.createElement('div');
+    message.className = 'form-text';
+    message.textContent = 'No audiobook libraries were returned.';
+    container.appendChild(message);
+    return;
+  }
+  const heading = document.createElement('div');
+  heading.className = 'form-label mb-2';
+  heading.textContent = 'Libraries used as series sources';
+  container.appendChild(heading);
+  const selected = new Set(selectedIds || []);
+  libraries.forEach(library => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'form-check';
+    const input = document.createElement('input');
+    input.className = 'form-check-input audiobookshelf-library';
+    input.type = 'checkbox';
+    input.id = `audiobookshelfLibrary-${library.id}`;
+    input.value = library.id;
+    input.checked = selected.has(library.id);
+    const label = document.createElement('label');
+    label.className = 'form-check-label';
+    label.htmlFor = input.id;
+    label.textContent = library.name;
+    wrapper.append(input, label);
+    container.appendChild(wrapper);
+  });
+  const help = document.createElement('div');
+  help.className = 'form-text';
+  help.textContent = 'Select one or more libraries, then save the settings.';
+  container.appendChild(help);
+}
+function setAudiobookshelfStatus(message, variant = 'info') {
+  const status = document.getElementById('audiobookshelfStatus');
+  if (!status) return;
+  status.style.display = message ? 'block' : 'none';
+  status.className = `alert alert-${variant} mt-3 py-2`;
+  status.textContent = message || '';
+}
 async function loadFrontpageSlugOptions() {
   try {
     const r = await fetch(apiPath('/api/users'));
@@ -293,6 +360,28 @@ async function loadSettings() {
     const usersCanEditEl = document.querySelector('[name=users_can_edit_frontpage_slug]');
     if (usersCanEditEl) usersCanEditEl.checked = !!currentSettings.users_can_edit_frontpage_slug;
 
+    const absHost = document.getElementById('audiobookshelfHost');
+    if (absHost) absHost.value = currentSettings.audiobookshelf_host || '';
+    const absToken = document.getElementById('audiobookshelfApiToken');
+    if (absToken) absToken.value = '';
+    const absTokenHelp = document.getElementById('audiobookshelfTokenHelp');
+    if (absTokenHelp) {
+      absTokenHelp.textContent = currentSettings.audiobookshelf_api_token_configured
+        ? 'A token is configured. Leave blank to keep it.'
+        : 'Enter a token to connect.';
+    }
+    renderAudiobookshelfLibraries(currentSettings.audiobookshelf_libraries || [], currentSettings.audiobookshelf_library_ids || []);
+    if (currentSettings.audiobookshelf_connection_ok) {
+      const checked = currentSettings.audiobookshelf_last_checked_at
+        ? ` Last checked ${new Date(currentSettings.audiobookshelf_last_checked_at).toLocaleString()}.`
+        : '';
+      setAudiobookshelfStatus(`Connected.${checked}`, 'success');
+    } else if (currentSettings.audiobookshelf_host) {
+      setAudiobookshelfStatus('The saved Audiobookshelf connection has not been verified.', 'warning');
+    } else {
+      setAudiobookshelfStatus('');
+    }
+
     syncProxyFields();
     syncInactiveSeriesFields();
   }
@@ -332,7 +421,8 @@ form.addEventListener('submit', async (ev) => {
     proxy_password: form.proxy_password ? form.proxy_password.value || null : (currentSettings && currentSettings.proxy_password) || null,
     secret_key: currentSettings && currentSettings.secret_key || null,
     users_can_edit_frontpage_slug: form.users_can_edit_frontpage_slug ? form.users_can_edit_frontpage_slug.checked || false : (currentSettings && currentSettings.users_can_edit_frontpage_slug) || false,
-    google_analytics_id: form.google_analytics_id ? form.google_analytics_id.value || null : (currentSettings && currentSettings.google_analytics_id) || null
+    google_analytics_id: form.google_analytics_id ? form.google_analytics_id.value || null : (currentSettings && currentSettings.google_analytics_id) || null,
+    audiobookshelf_library_ids: Array.from(document.querySelectorAll('.audiobookshelf-library:checked')).map(el => el.value)
   };
   const resp = await fetch(apiPath('/api/settings'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
   if (resp.ok) {
@@ -353,6 +443,63 @@ syncProxyFields();
 const inactiveSeriesDetectionToggle = document.getElementById('inactiveSeriesDetectionToggle');
 if (inactiveSeriesDetectionToggle) inactiveSeriesDetectionToggle.addEventListener('change', syncInactiveSeriesFields);
 syncInactiveSeriesFields();
+
+const testAudiobookshelfBtn = document.getElementById('testAudiobookshelfBtn');
+if (testAudiobookshelfBtn) testAudiobookshelfBtn.addEventListener('click', async () => {
+  const host = document.getElementById('audiobookshelfHost').value.trim();
+  const token = document.getElementById('audiobookshelfApiToken').value.trim();
+  testAudiobookshelfBtn.disabled = true;
+  testAudiobookshelfBtn.textContent = 'Testing...';
+  setAudiobookshelfStatus('');
+  try {
+    const body = { host };
+    if (token) body.api_token = token;
+    const response = await fetch(apiPath('/api/settings/audiobookshelf/test'), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.detail || 'Connection test failed.');
+    document.getElementById('audiobookshelfApiToken').value = '';
+    await loadSettings();
+  } catch (error) {
+    setAudiobookshelfStatus(error.message, 'danger');
+  } finally {
+    testAudiobookshelfBtn.disabled = false;
+    testAudiobookshelfBtn.textContent = 'Connect / Test';
+  }
+});
+
+const removeAudiobookshelfBtn = document.getElementById('removeAudiobookshelfBtn');
+if (removeAudiobookshelfBtn) removeAudiobookshelfBtn.addEventListener('click', async () => {
+  if (removeAudiobookshelfBtn.dataset.confirmed !== 'true') {
+    removeAudiobookshelfBtn.dataset.confirmed = 'true';
+    removeAudiobookshelfBtn.textContent = 'Confirm removal';
+    setTimeout(() => {
+      if (removeAudiobookshelfBtn.dataset.confirmed === 'true') {
+        removeAudiobookshelfBtn.dataset.confirmed = '';
+        removeAudiobookshelfBtn.textContent = 'Remove instance';
+      }
+    }, 3000);
+    return;
+  }
+  removeAudiobookshelfBtn.disabled = true;
+  try {
+    const response = await fetch(apiPath('/api/settings/audiobookshelf'), {method: 'DELETE'});
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.detail || 'Could not remove the instance.');
+    }
+    await loadSettings();
+  } catch (error) {
+    setAudiobookshelfStatus(error.message, 'danger');
+  } finally {
+    removeAudiobookshelfBtn.disabled = false;
+    removeAudiobookshelfBtn.dataset.confirmed = '';
+    removeAudiobookshelfBtn.textContent = 'Remove instance';
+  }
+});
 
 const testProxyBtn = document.getElementById('testProxyBtn');
 if (testProxyBtn) testProxyBtn.addEventListener('click', async () => {

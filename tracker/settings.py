@@ -32,6 +32,12 @@ class Settings(BaseModel):
     developer_mode: bool = False
     default_num_results: int = 10
     google_analytics_id: Optional[str] = None
+    audiobookshelf_host: Optional[str] = None
+    audiobookshelf_api_token: Optional[str] = None
+    audiobookshelf_connection_ok: bool = False
+    audiobookshelf_last_checked_at: Optional[str] = None
+    audiobookshelf_libraries: list[dict] = Field(default_factory=list)
+    audiobookshelf_library_ids: list[str] = Field(default_factory=list)
 
 
 def default_settings() -> Settings:
@@ -61,6 +67,12 @@ def default_settings() -> Settings:
         developer_mode=False,
         default_num_results=10,
         google_analytics_id=None,
+        audiobookshelf_host=None,
+        audiobookshelf_api_token=None,
+        audiobookshelf_connection_ok=False,
+        audiobookshelf_last_checked_at=None,
+        audiobookshelf_libraries=[],
+        audiobookshelf_library_ids=[],
     )
 
 

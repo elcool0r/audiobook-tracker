@@ -598,7 +598,7 @@ class TestAudibleIntegration:
     
     def test_product_lookup(self, client, auth_headers):
         """Test looking up a product by ASIN."""
-        with patch('lib.audible_api_search.get_product_by_asin') as mock_get_product:
+        with patch('tracker.api.get_product_by_asin') as mock_get_product:
             mock_get_product.return_value = {
                 "asin": "TEST123",
                 "title": "Test Book",
@@ -614,7 +614,7 @@ class TestAudibleIntegration:
     
     def test_audible_search(self, client, auth_headers):
         """Test searching Audible catalog."""
-        with patch('lib.audible_api_search.search_audible') as mock_search:
+        with patch('tracker.api.search_audible') as mock_search:
             mock_search.return_value = {
                 "products": [
                     {

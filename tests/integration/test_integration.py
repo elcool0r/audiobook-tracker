@@ -182,6 +182,27 @@ class TestPageAccess:
         response = client.get("/config/settings", headers=auth_headers)
         assert response.status_code == 200
         assert "settings" in response.text.lower()
+        assert 'id="audiobookshelfHost"' in response.text
+
+    def test_audiobookshelf_panel_requires_a_working_selected_library(self, client, auth_headers):
+        from tracker.settings import default_settings
+
+        response = client.get("/config/library", headers=auth_headers)
+        assert response.status_code == 200
+        assert 'id="audiobookshelfSeriesCollapse"' not in response.text
+
+        configured = default_settings().model_copy(update={
+            "audiobookshelf_host": "http://abs.local",
+            "audiobookshelf_api_token": "secret",
+            "audiobookshelf_connection_ok": True,
+            "audiobookshelf_libraries": [{"id": "one", "name": "Audiobooks"}],
+            "audiobookshelf_library_ids": ["one"],
+        })
+        with patch("tracker.settings.load_settings", return_value=configured):
+            response = client.get("/config/library", headers=auth_headers)
+        assert response.status_code == 200
+        assert 'id="audiobookshelfSeriesCollapse" class="collapse"' in response.text
+        assert "Find &amp; Add" not in response.text
 
     
     def test_users_page(self, client, auth_headers):
@@ -473,6 +494,8 @@ class TestAPI:
         assert data.get('inactive_series_cutoff_unit') == 'years'
         assert data.get('inactive_series_refresh_value') == 1
         assert data.get('inactive_series_refresh_unit') == 'months'
+        assert 'audiobookshelf_api_token' not in data
+        assert data.get('audiobookshelf_api_token_configured') is False
 
     
     def test_api_library_get(self, client, auth_headers):

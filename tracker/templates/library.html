@@ -65,6 +65,25 @@
         </div>
       </div>
     </div>
+    {% if search_enabled and settings.audiobookshelf_connection_ok and settings.audiobookshelf_host and settings.audiobookshelf_api_token and settings.audiobookshelf_library_ids %}
+    <div class="card mb-3">
+      <div class="card-header">
+        <h5 class="card-title mb-0 d-flex align-items-center collapsed" style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#audiobookshelfSeriesCollapse" aria-expanded="false" aria-controls="audiobookshelfSeriesCollapse">
+          <i class="bi bi-chevron-down me-2 collapse-icon"></i>
+          Audiobookshelf Series
+        </h5>
+      </div>
+      <div id="audiobookshelfSeriesCollapse" class="collapse">
+        <div class="card-body">
+          <div class="mb-2">
+            <input class="form-control form-control-sm" id="audiobookshelfSeriesSearch" placeholder="Search Audiobookshelf series..." />
+          </div>
+          <div id="audiobookshelfSeries"></div>
+          <div id="audiobookshelfSeriesPagination" class="mt-2"></div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 <div class="card mt-4">
@@ -454,6 +473,7 @@ async function searchSeries(query, num) {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           // Refresh UI after successful add
           await Promise.all([fetchLibrary(), loadKnownSeries()]);
+          if (audiobookshelfSeriesLoaded) await loadAudiobookshelfSeries(true);
           // Clear search results only if this was the last add or something, but for now, keep it simple
         })
         .catch(e => {
@@ -618,6 +638,7 @@ function renderBulkResults(page = 1) {
       btn.textContent = 'Adding...';
       await fetch(apiPath('/api/library'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: s.title, asin: s.asin || null, url: s.url || null }) });
       await Promise.all([fetchLibrary(), loadKnownSeries()]);
+      if (audiobookshelfSeriesLoaded) await loadAudiobookshelfSeries(true);
       // For bulk search, don't clear results or reset form
       btn.textContent = 'Added';
       btn.disabled = true;
@@ -983,6 +1004,100 @@ if (seriesSearchForm) {
   });
 }
 
+let audiobookshelfSeriesLoaded = false;
+let audiobookshelfSeriesItems = [];
+let audiobookshelfSeriesPage = 1;
+
+function renderAudiobookshelfSeries(page = 1) {
+  const container = document.getElementById('audiobookshelfSeries');
+  const pagination = document.getElementById('audiobookshelfSeriesPagination');
+  const search = document.getElementById('audiobookshelfSeriesSearch');
+  if (!container || !pagination || !search) return;
+  clearElement(container);
+  pagination.replaceChildren();
+  const query = search.value.trim().toLowerCase();
+  const filtered = audiobookshelfSeriesItems.filter(item => !query || item.title.toLowerCase().includes(query));
+  if (!filtered.length) {
+    container.innerHTML = '<div class="alert alert-info py-2 mb-0">No unknown Audiobookshelf series found.</div>';
+    return;
+  }
+  const pageSize = 10;
+  const totalPages = Math.ceil(filtered.length / pageSize);
+  audiobookshelfSeriesPage = Math.max(1, Math.min(page, totalPages));
+  const list = document.createElement('div');
+  list.className = 'list-group';
+  filtered.slice((audiobookshelfSeriesPage - 1) * pageSize, audiobookshelfSeriesPage * pageSize).forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'list-group-item d-flex justify-content-between align-items-center gap-2';
+    const details = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = item.title;
+    details.appendChild(title);
+    if (item.libraries && item.libraries.length) {
+      const source = document.createElement('div');
+      source.className = 'small text-muted';
+      source.textContent = item.libraries.join(', ');
+      details.appendChild(source);
+    }
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-sm btn-outline-primary flex-shrink-0';
+    button.textContent = 'Find & Add';
+    button.onclick = async () => {
+      const form = document.getElementById('seriesSearchForm');
+      const bulkToggle = document.getElementById('bulkSearchToggle');
+      if (!form || !bulkToggle) return;
+      bulkToggle.checked = false;
+      bulkToggle.dispatchEvent(new Event('change'));
+      form.query.value = item.title;
+      form.scrollIntoView({behavior: 'smooth', block: 'start'});
+      await searchSeries(item.title, undefined);
+    };
+    row.append(details, button);
+    list.appendChild(row);
+  });
+  container.appendChild(list);
+  if (totalPages > 1) {
+    const group = document.createElement('div');
+    group.className = 'btn-group btn-group-sm';
+    const previous = document.createElement('button');
+    previous.className = 'btn btn-outline-secondary';
+    previous.textContent = 'Previous';
+    previous.disabled = audiobookshelfSeriesPage === 1;
+    previous.onclick = () => renderAudiobookshelfSeries(audiobookshelfSeriesPage - 1);
+    const status = document.createElement('button');
+    status.className = 'btn btn-outline-secondary disabled';
+    status.textContent = `${audiobookshelfSeriesPage} / ${totalPages}`;
+    const next = document.createElement('button');
+    next.className = 'btn btn-outline-secondary';
+    next.textContent = 'Next';
+    next.disabled = audiobookshelfSeriesPage === totalPages;
+    next.onclick = () => renderAudiobookshelfSeries(audiobookshelfSeriesPage + 1);
+    group.append(previous, status, next);
+    pagination.appendChild(group);
+  }
+}
+
+async function loadAudiobookshelfSeries(force = false) {
+  const container = document.getElementById('audiobookshelfSeries');
+  if (!container || (audiobookshelfSeriesLoaded && !force)) return;
+  container.innerHTML = '<div class="text-muted">Loading Audiobookshelf series...</div>';
+  try {
+    const response = await fetch(apiPath('/api/audiobookshelf/series'));
+    const result = await response.json().catch(() => ([]));
+    if (!response.ok) throw new Error(result.detail || 'Could not load Audiobookshelf series.');
+    audiobookshelfSeriesItems = Array.isArray(result) ? result : [];
+    audiobookshelfSeriesLoaded = true;
+    renderAudiobookshelfSeries(1);
+  } catch (error) {
+    clearElement(container);
+    const alert = document.createElement('div');
+    alert.className = 'alert alert-danger py-2 mb-0';
+    alert.textContent = error.message;
+    container.appendChild(alert);
+  }
+}
+
 fetchLibrary();
 loadKnownSeries();
 
@@ -998,6 +1113,20 @@ document.getElementById('knownSeriesCollapse').addEventListener('hidden.bs.colla
   const header = document.querySelector('[data-bs-target="#knownSeriesCollapse"]');
   if (header) header.classList.add('collapsed');
 });
+
+const audiobookshelfCollapse = document.getElementById('audiobookshelfSeriesCollapse');
+if (audiobookshelfCollapse) {
+  audiobookshelfCollapse.addEventListener('shown.bs.collapse', function () {
+    const header = document.querySelector('[data-bs-target="#audiobookshelfSeriesCollapse"]');
+    if (header) header.classList.remove('collapsed');
+    loadAudiobookshelfSeries();
+  });
+  audiobookshelfCollapse.addEventListener('hidden.bs.collapse', function () {
+    const header = document.querySelector('[data-bs-target="#audiobookshelfSeriesCollapse"]');
+    if (header) header.classList.add('collapsed');
+  });
+  document.getElementById('audiobookshelfSeriesSearch').addEventListener('input', () => renderAudiobookshelfSeries(1));
+}
 </script>
 </div>
 {% endblock %}
