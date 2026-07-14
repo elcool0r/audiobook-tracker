@@ -258,6 +258,9 @@ def create_app() -> FastAPI:
     @app.get("/home/{slug}", response_class=HTMLResponse)
     async def user_home_page(request: Request, slug: str):
         # Fully server-rendered frontpage: Upcoming, Latest, and Series (no series view links)
+        page = render_frontpage_for_slug(request, slug, templates)
+        if page:
+            return page
         from .db import get_users_collection
         from .library import get_user_library
         users_col = get_users_collection()

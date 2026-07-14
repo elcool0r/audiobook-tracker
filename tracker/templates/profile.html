@@ -67,6 +67,25 @@
           <input class="form-control form-control-sm" type="number" id="latestCount" min="1" max="24" value="4" />
           <div class="form-text">How many items appear in the "Latest Releases" carousel (1-24).</div>
         </div>
+        <div class="border rounded p-3 mb-3">
+          <div class="form-check form-switch mb-2">
+            <input class="form-check-input" type="checkbox" id="inactiveSeriesIndicatorEnabled">
+            <label class="form-check-label" for="inactiveSeriesIndicatorEnabled">Show inactive series indicators</label>
+          </div>
+          <div id="inactiveSeriesIndicatorSettings">
+            <label class="form-label" for="profileInactiveSeriesCutoffValue">Mark series inactive after</label>
+            <div class="input-group input-group-sm">
+              <input class="form-control" type="number" id="profileInactiveSeriesCutoffValue" min="1" max="1000" value="2" />
+              <select class="form-select" id="profileInactiveSeriesCutoffUnit">
+                <option value="days">Days</option>
+                <option value="weeks">Weeks</option>
+                <option value="months">Months</option>
+                <option value="years" selected>Years</option>
+              </select>
+            </div>
+            <div class="form-text">Adds an archive icon when a series has no future release and its latest release is older than this cutoff.</div>
+          </div>
+        </div>
         <button class="btn btn-sm btn-primary" id="savePrefs">Save Preferences</button>
         <div class="alert alert-success mt-2" id="prefOk" style="display:none;">Preferences saved</div>
         <div class="alert alert-danger mt-2" id="prefErr" style="display:none;"></div>
@@ -117,6 +136,10 @@ async function loadProfile() {
   const hideDramEl = document.getElementById('hideDramatizedNarratorWarnings'); if (hideDramEl) hideDramEl.checked = p.hide_narrator_warnings_for_dramatized_adaptations === true;
   const hideDramContainer = document.getElementById('hideDramContainer'); if (hideDramContainer && showWarningsEl) { hideDramContainer.style.display = showWarningsEl.checked ? 'block' : 'none'; if (!showWarningsEl.checked && hideDramEl) { hideDramEl.disabled = true; hideDramEl.checked = false; } }
   const latestCountEl = document.getElementById('latestCount'); if (latestCountEl) latestCountEl.value = (p.latest_count || 4);
+  const inactiveIndicatorEl = document.getElementById('inactiveSeriesIndicatorEnabled'); if (inactiveIndicatorEl) inactiveIndicatorEl.checked = p.inactive_series_indicator_enabled === true;
+  const inactiveCutoffValueEl = document.getElementById('profileInactiveSeriesCutoffValue'); if (inactiveCutoffValueEl) inactiveCutoffValueEl.value = p.inactive_series_cutoff_value || 2;
+  const inactiveCutoffUnitEl = document.getElementById('profileInactiveSeriesCutoffUnit'); if (inactiveCutoffUnitEl) inactiveCutoffUnitEl.value = p.inactive_series_cutoff_unit || 'years';
+  updateInactiveSeriesIndicatorFields();
   // frontpage link removed from profile (navbar provides it); only set input if present
   const fp = p.frontpage_slug || p.username;
   const frontpageEl = document.getElementById('frontpageSlug');
@@ -215,9 +238,19 @@ function updateHideDramVisibility() {
     if (hideDramEl) { hideDramEl.disabled = true; hideDramEl.checked = false; }
   }
 }
+function updateInactiveSeriesIndicatorFields() {
+  const toggle = document.getElementById('inactiveSeriesIndicatorEnabled');
+  if (!toggle) return;
+  document.querySelectorAll('#inactiveSeriesIndicatorSettings input, #inactiveSeriesIndicatorSettings select').forEach(el => {
+    el.disabled = !toggle.checked;
+  });
+}
 setTimeout(updateHideDramVisibility, 0);
+setTimeout(updateInactiveSeriesIndicatorFields, 0);
 const showWarningsElGlobal = document.getElementById('showNarratorWarnings');
 if (showWarningsElGlobal) showWarningsElGlobal.addEventListener('change', updateHideDramVisibility);
+const inactiveSeriesIndicatorToggle = document.getElementById('inactiveSeriesIndicatorEnabled');
+if (inactiveSeriesIndicatorToggle) inactiveSeriesIndicatorToggle.addEventListener('change', updateInactiveSeriesIndicatorFields);
 // loadApiKeys();  // DISABLED: API Keys feature
 
 document.getElementById('savePrefs').addEventListener('click', async () => {
@@ -230,6 +263,9 @@ document.getElementById('savePrefs').addEventListener('click', async () => {
     show_narrator_warnings: document.getElementById('showNarratorWarnings').checked,
     hide_narrator_warnings_for_dramatized_adaptations: document.getElementById('hideDramatizedNarratorWarnings').checked,
     latest_count: Number(document.getElementById('latestCount').value) || 4,
+    inactive_series_indicator_enabled: document.getElementById('inactiveSeriesIndicatorEnabled').checked,
+    inactive_series_cutoff_value: Number(document.getElementById('profileInactiveSeriesCutoffValue').value) || 2,
+    inactive_series_cutoff_unit: document.getElementById('profileInactiveSeriesCutoffUnit').value || 'years',
   };
 
   const r1 = await fetch(apiPath('/api/profile/preferences'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(prefsBody) });

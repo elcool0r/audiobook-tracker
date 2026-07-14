@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Literal, Optional
 import os
 
 from .db import get_settings_collection, get_users_collection
@@ -17,6 +17,11 @@ class Settings(BaseModel):
     max_job_history: int = 100
     auto_refresh_enabled: bool = True
     manual_refresh_interval_minutes: int = 10
+    inactive_series_detection_enabled: bool = False
+    inactive_series_cutoff_value: int = Field(default=2, ge=1, le=1000)
+    inactive_series_cutoff_unit: Literal["days", "weeks", "months", "years"] = "years"
+    inactive_series_refresh_value: int = Field(default=1, ge=1, le=1000)
+    inactive_series_refresh_unit: Literal["days", "weeks", "months", "years"] = "months"
     user_agent: Optional[str] = None
     allow_non_admin_series_search: bool = True
     skip_known_series_search: bool = True
@@ -41,6 +46,11 @@ def default_settings() -> Settings:
         max_job_history=100,
         auto_refresh_enabled=True,
         manual_refresh_interval_minutes=10,
+        inactive_series_detection_enabled=False,
+        inactive_series_cutoff_value=2,
+        inactive_series_cutoff_unit="years",
+        inactive_series_refresh_value=1,
+        inactive_series_refresh_unit="months",
         user_agent="Audible/671 CFNetwork/1240.0.4 Darwin/20.6.0",
         allow_non_admin_series_search=True,
         skip_known_series_search=True,

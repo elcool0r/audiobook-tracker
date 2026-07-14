@@ -98,6 +98,41 @@
         </div>
         <div class="form-text">When enabled, series will be automatically refreshed on a periodic schedule.</div>
       </div>
+      {% if user.role == 'admin' %}
+      <div class="border rounded p-3 mb-3">
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" name="inactive_series_detection_enabled" id="inactiveSeriesDetectionToggle" {% if settings.inactive_series_detection_enabled %}checked{% endif %} />
+          <label class="form-check-label" for="inactiveSeriesDetectionToggle">Enable inactive series detection</label>
+          <div class="form-text">Series without a future release are considered inactive when their latest visible release is older than the cutoff.</div>
+        </div>
+        <div id="inactiveSeriesSettings">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label" for="inactiveSeriesCutoffValue">Inactive after</label>
+              <div class="input-group">
+                <input class="form-control" type="number" min="1" max="1000" name="inactive_series_cutoff_value" id="inactiveSeriesCutoffValue" value="{{ settings.inactive_series_cutoff_value }}" required />
+                <select class="form-select" name="inactive_series_cutoff_unit" id="inactiveSeriesCutoffUnit">
+                  {% for unit in ['days', 'weeks', 'months', 'years'] %}
+                  <option value="{{ unit }}" {% if settings.inactive_series_cutoff_unit == unit %}selected{% endif %}>{{ unit|capitalize }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="inactiveSeriesRefreshValue">Refresh inactive series every</label>
+              <div class="input-group">
+                <input class="form-control" type="number" min="1" max="1000" name="inactive_series_refresh_value" id="inactiveSeriesRefreshValue" value="{{ settings.inactive_series_refresh_value }}" required />
+                <select class="form-select" name="inactive_series_refresh_unit" id="inactiveSeriesRefreshUnit">
+                  {% for unit in ['days', 'weeks', 'months', 'years'] %}
+                  <option value="{{ unit }}" {% if settings.inactive_series_refresh_unit == unit %}selected{% endif %}>{{ unit|capitalize }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
       <div class="mb-3">
         <button type="button" class="btn btn-sm btn-outline-primary two-step-confirm" id="assignScheduleBtn">Assign new schedule to all series</button>
         <button type="button" class="btn btn-sm btn-outline-secondary ms-2 two-step-confirm" id="refreshAllBtn">Refresh All Series now</button>
@@ -167,6 +202,13 @@ function syncProxyFields() {
   const testBtn = document.getElementById('testProxyBtn');
   if (testBtn) testBtn.disabled = !enabled;
 }
+function syncInactiveSeriesFields() {
+  const toggle = document.getElementById('inactiveSeriesDetectionToggle');
+  if (!toggle) return;
+  document.querySelectorAll('#inactiveSeriesSettings input, #inactiveSeriesSettings select').forEach(el => {
+    el.disabled = !toggle.checked;
+  });
+}
 async function loadFrontpageSlugOptions() {
   try {
     const r = await fetch(apiPath('/api/users'));
@@ -227,6 +269,17 @@ async function loadSettings() {
     const autoRefreshEl = document.querySelector('[name=auto_refresh_enabled]');
     if (autoRefreshEl) autoRefreshEl.checked = currentSettings.auto_refresh_enabled || false;
 
+    const inactiveDetectionEl = document.querySelector('[name=inactive_series_detection_enabled]');
+    if (inactiveDetectionEl) inactiveDetectionEl.checked = !!currentSettings.inactive_series_detection_enabled;
+    const inactiveCutoffValueEl = document.querySelector('[name=inactive_series_cutoff_value]');
+    if (inactiveCutoffValueEl) inactiveCutoffValueEl.value = currentSettings.inactive_series_cutoff_value || 2;
+    const inactiveCutoffUnitEl = document.querySelector('[name=inactive_series_cutoff_unit]');
+    if (inactiveCutoffUnitEl) inactiveCutoffUnitEl.value = currentSettings.inactive_series_cutoff_unit || 'years';
+    const inactiveRefreshValueEl = document.querySelector('[name=inactive_series_refresh_value]');
+    if (inactiveRefreshValueEl) inactiveRefreshValueEl.value = currentSettings.inactive_series_refresh_value || 1;
+    const inactiveRefreshUnitEl = document.querySelector('[name=inactive_series_refresh_unit]');
+    if (inactiveRefreshUnitEl) inactiveRefreshUnitEl.value = currentSettings.inactive_series_refresh_unit || 'months';
+
     const allowSeriesEl = document.querySelector('[name=allow_non_admin_series_search]');
     if (allowSeriesEl) allowSeriesEl.checked = currentSettings.allow_non_admin_series_search || false;
 
@@ -241,6 +294,7 @@ async function loadSettings() {
     if (usersCanEditEl) usersCanEditEl.checked = !!currentSettings.users_can_edit_frontpage_slug;
 
     syncProxyFields();
+    syncInactiveSeriesFields();
   }
 }
 
@@ -261,6 +315,11 @@ form.addEventListener('submit', async (ev) => {
     max_job_history: form.max_job_history ? (parseInt(form.max_job_history.value,10) || currentSettings.max_job_history || 100) : (currentSettings && currentSettings.max_job_history) || 100,
     auto_refresh_enabled: form.auto_refresh_enabled ? form.auto_refresh_enabled.checked || false : (currentSettings && currentSettings.auto_refresh_enabled) || false,
     manual_refresh_interval_minutes: (form.manual_refresh_interval_minutes ? parseInt(form.manual_refresh_interval_minutes.value,10) : (currentSettings && currentSettings.manual_refresh_interval_minutes)) || 10,
+    inactive_series_detection_enabled: form.inactive_series_detection_enabled ? form.inactive_series_detection_enabled.checked : !!(currentSettings && currentSettings.inactive_series_detection_enabled),
+    inactive_series_cutoff_value: form.inactive_series_cutoff_value ? parseInt(form.inactive_series_cutoff_value.value, 10) : (currentSettings && currentSettings.inactive_series_cutoff_value) || 2,
+    inactive_series_cutoff_unit: form.inactive_series_cutoff_unit ? form.inactive_series_cutoff_unit.value : (currentSettings && currentSettings.inactive_series_cutoff_unit) || 'years',
+    inactive_series_refresh_value: form.inactive_series_refresh_value ? parseInt(form.inactive_series_refresh_value.value, 10) : (currentSettings && currentSettings.inactive_series_refresh_value) || 1,
+    inactive_series_refresh_unit: form.inactive_series_refresh_unit ? form.inactive_series_refresh_unit.value : (currentSettings && currentSettings.inactive_series_refresh_unit) || 'months',
     response_groups: currentSettings && currentSettings.response_groups || null,
     user_agent: form.user_agent ? form.user_agent.value || null : (currentSettings && currentSettings.user_agent) || null,
     allow_non_admin_series_search: form.allow_non_admin_series_search ? form.allow_non_admin_series_search.checked || false : (currentSettings && currentSettings.allow_non_admin_series_search) || false,
@@ -290,6 +349,10 @@ form.addEventListener('submit', async (ev) => {
 const proxyEnabledToggle = document.getElementById('proxyEnabledToggle');
 if (proxyEnabledToggle) proxyEnabledToggle.addEventListener('change', syncProxyFields);
 syncProxyFields();
+
+const inactiveSeriesDetectionToggle = document.getElementById('inactiveSeriesDetectionToggle');
+if (inactiveSeriesDetectionToggle) inactiveSeriesDetectionToggle.addEventListener('change', syncInactiveSeriesFields);
+syncInactiveSeriesFields();
 
 const testProxyBtn = document.getElementById('testProxyBtn');
 if (testProxyBtn) testProxyBtn.addEventListener('click', async () => {

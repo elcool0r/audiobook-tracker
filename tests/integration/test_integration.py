@@ -259,6 +259,47 @@ class TestPageAccess:
                 assert 'Book 2' in response.text
                 assert 'bi bi-mic' not in response.text
 
+    def test_frontpage_marks_inactive_series_and_latest_card(self, client):
+        mock_users_collection = MagicMock()
+
+        def mock_find_user(query):
+            if query.get("$or"):
+                return {
+                    "username": "admin",
+                    "frontpage_slug": "admin",
+                    "date_format": "iso",
+                    "inactive_series_indicator_enabled": True,
+                    "inactive_series_cutoff_value": 2,
+                    "inactive_series_cutoff_unit": "years",
+                }
+            return None
+
+        mock_users_collection.find_one.side_effect = mock_find_user
+        old_series = type('Series', (), {
+            'title': 'Inactive Series',
+            'asin': 'S-INACTIVE',
+            'url': 'https://example.com/series',
+            'fetched_at': '2026-01-01T00:00:00Z',
+            'books': [
+                type('Book', (), {
+                    'title': 'Old Book',
+                    'release_date': '2020-01-01',
+                    'url': 'https://example.com/old-book',
+                    'asin': 'B-OLD',
+                    'narrators': ['Narrator'],
+                    'runtime': 300,
+                    'hidden': False,
+                })()
+            ],
+        })()
+        with patch('tracker.db.get_users_collection', return_value=mock_users_collection), \
+             patch('tracker.library.get_user_library', return_value=[old_series]):
+            response = client.get("/home/admin")
+
+        assert response.status_code == 200
+        assert response.text.count('bi bi-archive') == 2
+        assert 'Inactive series: no release within the last 2 years.' in response.text
+
     def test_root_hides_dramatized_narrator_warning_when_default_frontpage_set(self, client):
         """When the global default frontpage slug is set, the root '/' should render the same way and respect the user's preference."""
         from tracker.auth import get_password_hash
@@ -326,6 +367,14 @@ class TestPageAccess:
         assert "hide_narrator_warnings_for_dramatized_adaptations" in data
         assert data["hide_narrator_warnings_for_dramatized_adaptations"] is False
 
+    def test_profile_api_includes_inactive_series_defaults(self, client, auth_headers):
+        resp = client.get("/config/api/profile", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["inactive_series_indicator_enabled"] is False
+        assert data["inactive_series_cutoff_value"] == 2
+        assert data["inactive_series_cutoff_unit"] == "years"
+
     def test_update_profile_saves_latest_count(self, client, auth_headers):
         """Updating profile preferences should store latest_count on the user document."""
         mock_users_collection = MagicMock()
@@ -341,6 +390,34 @@ class TestPageAccess:
             # called_args is (filter, update)
             assert called_args[1]["$set"].get("latest_count") == 8
             assert called_args[1]["$set"].get("hide_narrator_warnings_for_dramatized_adaptations") is True
+
+    def test_update_profile_saves_inactive_series_preferences(self, client, auth_headers):
+        mock_users_collection = MagicMock()
+        mock_users_collection.find_one.return_value = {"username": "admin", "_id": "admin-id"}
+        with patch('tracker.db.get_users_collection', return_value=mock_users_collection), patch('tracker.api.get_users_collection', return_value=mock_users_collection):
+            payload = {
+                "date_format": "iso",
+                "show_narrator_warnings": True,
+                "latest_count": 4,
+                "inactive_series_indicator_enabled": True,
+                "inactive_series_cutoff_value": 18,
+                "inactive_series_cutoff_unit": "months",
+            }
+            resp = client.post("/config/api/profile/preferences", json=payload, headers=auth_headers)
+            assert resp.status_code == 200
+            preferences = mock_users_collection.update_one.call_args[0][1]["$set"]
+            assert preferences["inactive_series_indicator_enabled"] is True
+            assert preferences["inactive_series_cutoff_value"] == 18
+            assert preferences["inactive_series_cutoff_unit"] == "months"
+
+    def test_update_profile_rejects_invalid_inactive_series_unit(self, client, auth_headers):
+        payload = {
+            "date_format": "iso",
+            "show_narrator_warnings": True,
+            "latest_count": 4,
+            "inactive_series_cutoff_unit": "hours",
+        }
+        assert client.post("/config/api/profile/preferences", json=payload, headers=auth_headers).status_code == 422
 
     def test_update_profile_latest_count_validation(self, client, auth_headers):
         """latest_count must be within the allowed range."""
@@ -391,6 +468,11 @@ class TestAPI:
         assert isinstance(data, dict)
         # New setting defaults to False
         assert data.get('users_can_edit_frontpage_slug') is False
+        assert data.get('inactive_series_detection_enabled') is False
+        assert data.get('inactive_series_cutoff_value') == 2
+        assert data.get('inactive_series_cutoff_unit') == 'years'
+        assert data.get('inactive_series_refresh_value') == 1
+        assert data.get('inactive_series_refresh_unit') == 'months'
 
     
     def test_api_library_get(self, client, auth_headers):
