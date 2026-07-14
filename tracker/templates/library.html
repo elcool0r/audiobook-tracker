@@ -126,10 +126,27 @@ function setSeriesSearchMessage(message, variant = 'info') {
   el.innerHTML = `<div class="alert alert-${variant} py-1 mb-2">${message}</div>`;
 }
 
-function initCoverTooltips() {
+function disposeCoverTooltips(root = document) {
   try {
-    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-    tooltipTriggerList.forEach(function (tooltipTriggerEl) { new bootstrap.Tooltip(tooltipTriggerEl); });
+    root.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((tooltipTriggerEl) => {
+      bootstrap.Tooltip.getInstance(tooltipTriggerEl)?.dispose();
+    });
+  } catch (e) {
+    /* bootstrap might not be available yet; ignore */
+  }
+}
+
+function clearElement(element) {
+  if (!element) return;
+  disposeCoverTooltips(element);
+  element.replaceChildren();
+}
+
+function initCoverTooltips(root = document) {
+  try {
+    root.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((tooltipTriggerEl) => {
+      bootstrap.Tooltip.getOrCreateInstance(tooltipTriggerEl);
+    });
   } catch (e) {
     /* bootstrap might not be available yet; ignore */
   }
@@ -237,7 +254,7 @@ async function fetchLibrary() {
 
 function renderLibraryTable() {
   const container = document.getElementById('libraryTable');
-  container.innerHTML = '';
+  clearElement(container);
   if (!libraryItems.length) {
     container.innerHTML = '<div class="alert alert-info">No items yet.</div>';
     return;
@@ -356,7 +373,7 @@ function renderLibraryTable() {
   table.appendChild(tbody);
   container.appendChild(table);
 
-  initCoverTooltips();
+  initCoverTooltips(container);
 }
 
 async function searchSeries(query, num) {
@@ -365,7 +382,7 @@ async function searchSeries(query, num) {
   const cleanedQuery = (query || '').trim();
   if (!cleanedQuery) {
     setSeriesSearchMessage('');
-    container.innerHTML = '';
+    clearElement(container);
     return;
   }
   setSeriesSearchMessage('');
@@ -377,11 +394,11 @@ async function searchSeries(query, num) {
   if (skipHeader === 'true') {
       const skippedTitle = r.headers.get(SEARCH_SKIP_TITLE_HEADER) || cleanedQuery;
       setSeriesSearchMessage(`Series "${skippedTitle}" already in the library; search skipped.`, 'warning');
-    container.innerHTML = '';
+    clearElement(container);
     return;
   }
   setSeriesSearchMessage('');
-  container.innerHTML = '';
+  clearElement(container);
   if (!results.length) {
     container.innerHTML = '<div class="alert alert-info">No series found.</div>';
     return;
@@ -451,7 +468,7 @@ async function searchSeries(query, num) {
           }
         });
       // Clear search results immediately for better UX
-      container.innerHTML = '';
+      clearElement(container);
       document.getElementById('seriesSearchForm').reset();
     };
     item.appendChild(left);
@@ -459,13 +476,14 @@ async function searchSeries(query, num) {
     list.appendChild(item);
   }
   container.appendChild(list);
-  initCoverTooltips();
+  initCoverTooltips(container);
 }
 
 async function bulkSearchSeries(queries) {
   const container = document.getElementById('seriesResults');
   if (!container) return;
   setSeriesSearchMessage('');
+  clearElement(container);
   container.innerHTML = '<div class="alert alert-info">Searching...</div>';
 
   const allResults = [];
@@ -523,16 +541,14 @@ async function bulkSearchSeries(queries) {
   document.getElementById('bulkSortControls').classList.remove('d-none');
 
   renderBulkResults(1);
-
-  initCoverTooltips();
 }
 
 function renderBulkResults(page = 1) {
   const container = document.getElementById('seriesResults');
   const paginationContainer = document.getElementById('bulkPagination');
 
-  container.innerHTML = '';
-  paginationContainer.innerHTML = '';
+  clearElement(container);
+  paginationContainer.replaceChildren();
 
   // Sort bulk results
   const sorted = [...bulkResults].sort((a, b) => {
@@ -680,7 +696,7 @@ function renderBulkResults(page = 1) {
     paginationContainer.classList.add('d-none');
   }
 
-  initCoverTooltips();
+  initCoverTooltips(container);
 }
 
 async function loadKnownSeries() {
@@ -740,8 +756,8 @@ async function loadKnownSeries() {
   }
 
   function renderSeries(page = 1) {
-    container.innerHTML = '';
-    paginationContainer.innerHTML = '';
+    clearElement(container);
+    paginationContainer.replaceChildren();
 
     const filtered = sortSeries(getFilteredSeries());
 
@@ -884,7 +900,7 @@ async function loadKnownSeries() {
       paginationContainer.appendChild(nav);
     }
     // Initialize tooltips for cover icons
-    initCoverTooltips();
+    initCoverTooltips(container);
   }
 
   searchInput.oninput = () => renderSeries(1);
