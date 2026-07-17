@@ -723,7 +723,17 @@ class TaskWorker:
         count = lib_col.count_documents(filter_q)
         if not count:
             return
-        entries_cursor = lib_col.find(filter_q, {"username": 1, "series_asin": 1, "notified_new_asins": 1, "notified_releases": 1, "_id": 1}).batch_size(500)
+        entries_cursor = lib_col.find(
+            filter_q,
+            {
+                "username": 1,
+                "series_asin": 1,
+                "notified_new_asins": 1,
+                "notified_new_asins_initialized": 1,
+                "notified_releases": 1,
+                "_id": 1,
+            },
+        ).batch_size(500)
 
         user_cache: Dict[str, Dict[str, Any]] = {}
         series_cache: Dict[str, Dict[str, Any]] = {}
