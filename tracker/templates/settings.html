@@ -59,7 +59,30 @@
   </div>
 {% endif %}
 
-
+{% if user.role == 'admin' %}
+  <div class="card mb-3">
+    <div class="card-header">Audiobookshelf</div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-7">
+          <label class="form-label" for="audiobookshelfHost">Host</label>
+          <input class="form-control" id="audiobookshelfHost" type="url" placeholder="https://audiobookshelf.example.com" autocomplete="url" />
+        </div>
+        <div class="col-md-5">
+          <label class="form-label" for="audiobookshelfApiToken">API token</label>
+          <input class="form-control" id="audiobookshelfApiToken" type="password" autocomplete="new-password" data-bwignore="true" />
+          <div class="form-text" id="audiobookshelfTokenHelp">Enter a token to connect.</div>
+        </div>
+      </div>
+      <div class="mt-3 d-flex gap-2">
+        <button type="button" class="btn btn-sm btn-outline-primary" id="testAudiobookshelfBtn">Connect / Test</button>
+        <button type="button" class="btn btn-sm btn-outline-danger" id="removeAudiobookshelfBtn">Remove instance</button>
+      </div>
+      <div id="audiobookshelfStatus" class="mt-3" style="display:none" role="status"></div>
+      <div id="audiobookshelfLibraries" class="mt-3"></div>
+    </div>
+  </div>
+{% endif %}
 
   <div class="card mb-3">
     <div class="card-header">Proxy Settings</div>
@@ -98,6 +121,41 @@
         </div>
         <div class="form-text">When enabled, series will be automatically refreshed on a periodic schedule.</div>
       </div>
+      {% if user.role == 'admin' %}
+      <div class="border rounded p-3 mb-3">
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" name="inactive_series_detection_enabled" id="inactiveSeriesDetectionToggle" {% if settings.inactive_series_detection_enabled %}checked{% endif %} />
+          <label class="form-check-label" for="inactiveSeriesDetectionToggle">Enable inactive series detection</label>
+          <div class="form-text">Series without a future release are considered inactive when their latest visible release is older than the cutoff.</div>
+        </div>
+        <div id="inactiveSeriesSettings">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label" for="inactiveSeriesCutoffValue">Inactive after</label>
+              <div class="input-group">
+                <input class="form-control" type="number" min="1" max="1000" name="inactive_series_cutoff_value" id="inactiveSeriesCutoffValue" value="{{ settings.inactive_series_cutoff_value }}" required />
+                <select class="form-select" name="inactive_series_cutoff_unit" id="inactiveSeriesCutoffUnit">
+                  {% for unit in ['days', 'weeks', 'months', 'years'] %}
+                  <option value="{{ unit }}" {% if settings.inactive_series_cutoff_unit == unit %}selected{% endif %}>{{ unit|capitalize }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="inactiveSeriesRefreshValue">Refresh inactive series every</label>
+              <div class="input-group">
+                <input class="form-control" type="number" min="1" max="1000" name="inactive_series_refresh_value" id="inactiveSeriesRefreshValue" value="{{ settings.inactive_series_refresh_value }}" required />
+                <select class="form-select" name="inactive_series_refresh_unit" id="inactiveSeriesRefreshUnit">
+                  {% for unit in ['days', 'weeks', 'months', 'years'] %}
+                  <option value="{{ unit }}" {% if settings.inactive_series_refresh_unit == unit %}selected{% endif %}>{{ unit|capitalize }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
       <div class="mb-3">
         <button type="button" class="btn btn-sm btn-outline-primary two-step-confirm" id="assignScheduleBtn">Assign new schedule to all series</button>
         <button type="button" class="btn btn-sm btn-outline-secondary ms-2 two-step-confirm" id="refreshAllBtn">Refresh All Series now</button>
@@ -167,6 +225,57 @@ function syncProxyFields() {
   const testBtn = document.getElementById('testProxyBtn');
   if (testBtn) testBtn.disabled = !enabled;
 }
+function syncInactiveSeriesFields() {
+  const toggle = document.getElementById('inactiveSeriesDetectionToggle');
+  if (!toggle) return;
+  document.querySelectorAll('#inactiveSeriesSettings input, #inactiveSeriesSettings select').forEach(el => {
+    el.disabled = !toggle.checked;
+  });
+}
+function renderAudiobookshelfLibraries(libraries, selectedIds) {
+  const container = document.getElementById('audiobookshelfLibraries');
+  if (!container) return;
+  container.replaceChildren();
+  if (!libraries || !libraries.length) {
+    const message = document.createElement('div');
+    message.className = 'form-text';
+    message.textContent = 'No audiobook libraries were returned.';
+    container.appendChild(message);
+    return;
+  }
+  const heading = document.createElement('div');
+  heading.className = 'form-label mb-2';
+  heading.textContent = 'Libraries used as series sources';
+  container.appendChild(heading);
+  const selected = new Set(selectedIds || []);
+  libraries.forEach(library => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'form-check';
+    const input = document.createElement('input');
+    input.className = 'form-check-input audiobookshelf-library';
+    input.type = 'checkbox';
+    input.id = `audiobookshelfLibrary-${library.id}`;
+    input.value = library.id;
+    input.checked = selected.has(library.id);
+    const label = document.createElement('label');
+    label.className = 'form-check-label';
+    label.htmlFor = input.id;
+    label.textContent = library.name;
+    wrapper.append(input, label);
+    container.appendChild(wrapper);
+  });
+  const help = document.createElement('div');
+  help.className = 'form-text';
+  help.textContent = 'Select one or more libraries, then save the settings.';
+  container.appendChild(help);
+}
+function setAudiobookshelfStatus(message, variant = 'info') {
+  const status = document.getElementById('audiobookshelfStatus');
+  if (!status) return;
+  status.style.display = message ? 'block' : 'none';
+  status.className = `alert alert-${variant} mt-3 py-2`;
+  status.textContent = message || '';
+}
 async function loadFrontpageSlugOptions() {
   try {
     const r = await fetch(apiPath('/api/users'));
@@ -227,6 +336,17 @@ async function loadSettings() {
     const autoRefreshEl = document.querySelector('[name=auto_refresh_enabled]');
     if (autoRefreshEl) autoRefreshEl.checked = currentSettings.auto_refresh_enabled || false;
 
+    const inactiveDetectionEl = document.querySelector('[name=inactive_series_detection_enabled]');
+    if (inactiveDetectionEl) inactiveDetectionEl.checked = !!currentSettings.inactive_series_detection_enabled;
+    const inactiveCutoffValueEl = document.querySelector('[name=inactive_series_cutoff_value]');
+    if (inactiveCutoffValueEl) inactiveCutoffValueEl.value = currentSettings.inactive_series_cutoff_value || 2;
+    const inactiveCutoffUnitEl = document.querySelector('[name=inactive_series_cutoff_unit]');
+    if (inactiveCutoffUnitEl) inactiveCutoffUnitEl.value = currentSettings.inactive_series_cutoff_unit || 'years';
+    const inactiveRefreshValueEl = document.querySelector('[name=inactive_series_refresh_value]');
+    if (inactiveRefreshValueEl) inactiveRefreshValueEl.value = currentSettings.inactive_series_refresh_value || 1;
+    const inactiveRefreshUnitEl = document.querySelector('[name=inactive_series_refresh_unit]');
+    if (inactiveRefreshUnitEl) inactiveRefreshUnitEl.value = currentSettings.inactive_series_refresh_unit || 'months';
+
     const allowSeriesEl = document.querySelector('[name=allow_non_admin_series_search]');
     if (allowSeriesEl) allowSeriesEl.checked = currentSettings.allow_non_admin_series_search || false;
 
@@ -240,7 +360,30 @@ async function loadSettings() {
     const usersCanEditEl = document.querySelector('[name=users_can_edit_frontpage_slug]');
     if (usersCanEditEl) usersCanEditEl.checked = !!currentSettings.users_can_edit_frontpage_slug;
 
+    const absHost = document.getElementById('audiobookshelfHost');
+    if (absHost) absHost.value = currentSettings.audiobookshelf_host || '';
+    const absToken = document.getElementById('audiobookshelfApiToken');
+    if (absToken) absToken.value = '';
+    const absTokenHelp = document.getElementById('audiobookshelfTokenHelp');
+    if (absTokenHelp) {
+      absTokenHelp.textContent = currentSettings.audiobookshelf_api_token_configured
+        ? 'A token is configured. Leave blank to keep it.'
+        : 'Enter a token to connect.';
+    }
+    renderAudiobookshelfLibraries(currentSettings.audiobookshelf_libraries || [], currentSettings.audiobookshelf_library_ids || []);
+    if (currentSettings.audiobookshelf_connection_ok) {
+      const checked = currentSettings.audiobookshelf_last_checked_at
+        ? ` Last checked ${new Date(currentSettings.audiobookshelf_last_checked_at).toLocaleString()}.`
+        : '';
+      setAudiobookshelfStatus(`Connected.${checked}`, 'success');
+    } else if (currentSettings.audiobookshelf_host) {
+      setAudiobookshelfStatus('The saved Audiobookshelf connection has not been verified.', 'warning');
+    } else {
+      setAudiobookshelfStatus('');
+    }
+
     syncProxyFields();
+    syncInactiveSeriesFields();
   }
 }
 
@@ -261,6 +404,11 @@ form.addEventListener('submit', async (ev) => {
     max_job_history: form.max_job_history ? (parseInt(form.max_job_history.value,10) || currentSettings.max_job_history || 100) : (currentSettings && currentSettings.max_job_history) || 100,
     auto_refresh_enabled: form.auto_refresh_enabled ? form.auto_refresh_enabled.checked || false : (currentSettings && currentSettings.auto_refresh_enabled) || false,
     manual_refresh_interval_minutes: (form.manual_refresh_interval_minutes ? parseInt(form.manual_refresh_interval_minutes.value,10) : (currentSettings && currentSettings.manual_refresh_interval_minutes)) || 10,
+    inactive_series_detection_enabled: form.inactive_series_detection_enabled ? form.inactive_series_detection_enabled.checked : !!(currentSettings && currentSettings.inactive_series_detection_enabled),
+    inactive_series_cutoff_value: form.inactive_series_cutoff_value ? parseInt(form.inactive_series_cutoff_value.value, 10) : (currentSettings && currentSettings.inactive_series_cutoff_value) || 2,
+    inactive_series_cutoff_unit: form.inactive_series_cutoff_unit ? form.inactive_series_cutoff_unit.value : (currentSettings && currentSettings.inactive_series_cutoff_unit) || 'years',
+    inactive_series_refresh_value: form.inactive_series_refresh_value ? parseInt(form.inactive_series_refresh_value.value, 10) : (currentSettings && currentSettings.inactive_series_refresh_value) || 1,
+    inactive_series_refresh_unit: form.inactive_series_refresh_unit ? form.inactive_series_refresh_unit.value : (currentSettings && currentSettings.inactive_series_refresh_unit) || 'months',
     response_groups: currentSettings && currentSettings.response_groups || null,
     user_agent: form.user_agent ? form.user_agent.value || null : (currentSettings && currentSettings.user_agent) || null,
     allow_non_admin_series_search: form.allow_non_admin_series_search ? form.allow_non_admin_series_search.checked || false : (currentSettings && currentSettings.allow_non_admin_series_search) || false,
@@ -273,7 +421,8 @@ form.addEventListener('submit', async (ev) => {
     proxy_password: form.proxy_password ? form.proxy_password.value || null : (currentSettings && currentSettings.proxy_password) || null,
     secret_key: currentSettings && currentSettings.secret_key || null,
     users_can_edit_frontpage_slug: form.users_can_edit_frontpage_slug ? form.users_can_edit_frontpage_slug.checked || false : (currentSettings && currentSettings.users_can_edit_frontpage_slug) || false,
-    google_analytics_id: form.google_analytics_id ? form.google_analytics_id.value || null : (currentSettings && currentSettings.google_analytics_id) || null
+    google_analytics_id: form.google_analytics_id ? form.google_analytics_id.value || null : (currentSettings && currentSettings.google_analytics_id) || null,
+    audiobookshelf_library_ids: Array.from(document.querySelectorAll('.audiobookshelf-library:checked')).map(el => el.value)
   };
   const resp = await fetch(apiPath('/api/settings'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
   if (resp.ok) {
@@ -290,6 +439,67 @@ form.addEventListener('submit', async (ev) => {
 const proxyEnabledToggle = document.getElementById('proxyEnabledToggle');
 if (proxyEnabledToggle) proxyEnabledToggle.addEventListener('change', syncProxyFields);
 syncProxyFields();
+
+const inactiveSeriesDetectionToggle = document.getElementById('inactiveSeriesDetectionToggle');
+if (inactiveSeriesDetectionToggle) inactiveSeriesDetectionToggle.addEventListener('change', syncInactiveSeriesFields);
+syncInactiveSeriesFields();
+
+const testAudiobookshelfBtn = document.getElementById('testAudiobookshelfBtn');
+if (testAudiobookshelfBtn) testAudiobookshelfBtn.addEventListener('click', async () => {
+  const host = document.getElementById('audiobookshelfHost').value.trim();
+  const token = document.getElementById('audiobookshelfApiToken').value.trim();
+  testAudiobookshelfBtn.disabled = true;
+  testAudiobookshelfBtn.textContent = 'Testing...';
+  setAudiobookshelfStatus('');
+  try {
+    const body = { host };
+    if (token) body.api_token = token;
+    const response = await fetch(apiPath('/api/settings/audiobookshelf/test'), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.detail || 'Connection test failed.');
+    document.getElementById('audiobookshelfApiToken').value = '';
+    await loadSettings();
+  } catch (error) {
+    setAudiobookshelfStatus(error.message, 'danger');
+  } finally {
+    testAudiobookshelfBtn.disabled = false;
+    testAudiobookshelfBtn.textContent = 'Connect / Test';
+  }
+});
+
+const removeAudiobookshelfBtn = document.getElementById('removeAudiobookshelfBtn');
+if (removeAudiobookshelfBtn) removeAudiobookshelfBtn.addEventListener('click', async () => {
+  if (removeAudiobookshelfBtn.dataset.confirmed !== 'true') {
+    removeAudiobookshelfBtn.dataset.confirmed = 'true';
+    removeAudiobookshelfBtn.textContent = 'Confirm removal';
+    setTimeout(() => {
+      if (removeAudiobookshelfBtn.dataset.confirmed === 'true') {
+        removeAudiobookshelfBtn.dataset.confirmed = '';
+        removeAudiobookshelfBtn.textContent = 'Remove instance';
+      }
+    }, 3000);
+    return;
+  }
+  removeAudiobookshelfBtn.disabled = true;
+  try {
+    const response = await fetch(apiPath('/api/settings/audiobookshelf'), {method: 'DELETE'});
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.detail || 'Could not remove the instance.');
+    }
+    await loadSettings();
+  } catch (error) {
+    setAudiobookshelfStatus(error.message, 'danger');
+  } finally {
+    removeAudiobookshelfBtn.disabled = false;
+    removeAudiobookshelfBtn.dataset.confirmed = '';
+    removeAudiobookshelfBtn.textContent = 'Remove instance';
+  }
+});
 
 const testProxyBtn = document.getElementById('testProxyBtn');
 if (testProxyBtn) testProxyBtn.addEventListener('click', async () => {

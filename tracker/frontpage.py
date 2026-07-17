@@ -6,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import settings as settings_mod
 from .__version__ import __version__
+from .inactive_series import INTERVAL_UNITS, classify_series_activity, format_interval
 
 def _parse_iso_datetime(value: str | None) -> Optional[_dt]:
     if not value or not isinstance(value, str):
@@ -111,6 +112,15 @@ def render_frontpage_for_slug(request: Request, slug: str, templates: Jinja2Temp
     date_format = user_doc.get("date_format", "de")
     library = get_user_library(username)
     num_latest = compute_num_latest(user_doc)
+    inactive_indicator_enabled = bool(user_doc.get("inactive_series_indicator_enabled", False))
+    try:
+        inactive_cutoff_value = max(1, int(user_doc.get("inactive_series_cutoff_value") or 2))
+    except (TypeError, ValueError):
+        inactive_cutoff_value = 2
+    inactive_cutoff_unit = user_doc.get("inactive_series_cutoff_unit") or "years"
+    if inactive_cutoff_unit not in INTERVAL_UNITS:
+        inactive_cutoff_unit = "years"
+    inactive_tooltip = f"Inactive series: no release within the last {format_interval(inactive_cutoff_value, inactive_cutoff_unit)}."
 
     now = _dt.now(timezone.utc).replace(tzinfo=None)
     upcoming_cards = []
@@ -158,6 +168,7 @@ def render_frontpage_for_slug(request: Request, slug: str, templates: Jinja2Temp
                 upcoming_cards.append({
                     "title": getattr(book, "title", None) or series_item.title,
                     "series": series_item.title,
+                    "series_asin": series_item.asin,
                     "narrators": getattr(book, "narrators", None) or "",
                     "runtime": getattr(book, "runtime", None) or "",
                     "runtime_str": runtime_str,
@@ -176,6 +187,7 @@ def render_frontpage_for_slug(request: Request, slug: str, templates: Jinja2Temp
                 latest_cards.append({
                     "title": getattr(book, "title", None) or series_item.title,
                     "series": series_item.title,
+                    "series_asin": series_item.asin,
                     "narrators": getattr(book, "narrators", None) or "",
                     "runtime": getattr(book, "runtime", None) or "",
                     "runtime_str": runtime_str,
@@ -215,6 +227,12 @@ def render_frontpage_for_slug(request: Request, slug: str, templates: Jinja2Temp
         last_release_ts = series_last_release.isoformat() if series_last_release else None
         next_release_str = format_d(series_next_release, date_format)
         next_release_ts = series_next_release.isoformat() if series_next_release else None
+        activity = classify_series_activity(
+            visible,
+            inactive_cutoff_value,
+            inactive_cutoff_unit,
+            now=now,
+        )
         series_rows.append({
             "title": series_item.title,
             "asin": series_item.asin,
@@ -228,6 +246,8 @@ def render_frontpage_for_slug(request: Request, slug: str, templates: Jinja2Temp
             "next_release_ts": next_release_ts,
             "duration_minutes": runtime_mins,
             "url": series_item.url,
+            "inactive": inactive_indicator_enabled and activity.inactive,
+            "inactive_tooltip": inactive_tooltip,
         })
 
     upcoming_cards.sort(key=lambda x: x["release_dt"])
@@ -237,6 +257,11 @@ def render_frontpage_for_slug(request: Request, slug: str, templates: Jinja2Temp
 
     for row in series_rows:
         row["narrator_warnings"] = narrator_warnings_map.get(row.get("asin")) or []
+
+    inactive_asins = {row.get("asin") for row in series_rows if row.get("inactive") and row.get("asin")}
+    for card in latest_cards:
+        card["inactive"] = card.get("series_asin") in inactive_asins
+        card["inactive_tooltip"] = inactive_tooltip
 
     title_to_asin = {row.get("title"): row.get("asin") for row in series_rows if row.get("title")}
 

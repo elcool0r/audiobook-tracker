@@ -418,6 +418,36 @@ class TestSettingsOperations:
             )
             assert response.status_code == 200
 
+    def test_inactive_setting_change_rebalances_running_scheduler(self, client, auth_headers):
+        from tracker.settings import default_settings
+
+        current = default_settings()
+        with patch('tracker.api.load_settings', return_value=current), \
+             patch('tracker.api.save_settings'), \
+             patch('tracker.api.worker.ensure_scheduler_running') as ensure_scheduler:
+            response = client.post(
+                "/config/api/settings",
+                json={
+                    "inactive_series_detection_enabled": True,
+                    "inactive_series_cutoff_value": 18,
+                    "inactive_series_cutoff_unit": "months",
+                    "inactive_series_refresh_value": 2,
+                    "inactive_series_refresh_unit": "weeks",
+                },
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 200
+        ensure_scheduler.assert_called_once_with(rebalance=True)
+
+    def test_invalid_inactive_setting_unit_is_rejected(self, client, auth_headers):
+        response = client.post(
+            "/config/api/settings",
+            json={"inactive_series_cutoff_unit": "hours"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 422
+
     def test_reschedule_all_series_spreads_over_24_hours(self, client, auth_headers):
         """Rescheduling should set next_refresh_at for all series distributed over 24 hours."""
         import mongomock
@@ -449,6 +479,37 @@ class TestSettingsOperations:
             diffs = [(times_sorted[i+1] - times_sorted[i]).total_seconds() for i in range(len(times_sorted)-1)]
             expected = (24*3600) / count
             assert all(d >= expected * 0.4 for d in diffs)
+
+    def test_reschedule_uses_slower_window_for_inactive_series(self):
+        """Inactive series should be distributed beyond the active 24-hour window."""
+        import mongomock
+        from datetime import datetime, timezone, timedelta
+        from types import SimpleNamespace
+
+        series_collection = mongomock.MongoClient().db.series
+        series_collection.insert_many([
+            {"_id": "ACTIVE", "books": [{"release_date": "2026-07-01"}]},
+            {"_id": "INACTIVE", "books": [{"release_date": "2020-01-01"}]},
+        ])
+        settings = SimpleNamespace(
+            inactive_series_detection_enabled=True,
+            inactive_series_cutoff_value=2,
+            inactive_series_cutoff_unit="years",
+            inactive_series_refresh_value=1,
+            inactive_series_refresh_unit="months",
+        )
+        reference = datetime(2026, 7, 14, tzinfo=timezone.utc).replace(tzinfo=None)
+        with patch('tracker.tasks.get_series_collection', return_value=series_collection), \
+             patch('tracker.tasks.load_settings', return_value=settings):
+            from tracker.tasks import _rebalance_auto_refresh
+            result = _rebalance_auto_refresh(reference)
+
+        active_at = datetime.fromisoformat(series_collection.find_one({"_id": "ACTIVE"})["next_refresh_at"].replace("Z", "+00:00"))
+        inactive_at = datetime.fromisoformat(series_collection.find_one({"_id": "INACTIVE"})["next_refresh_at"].replace("Z", "+00:00"))
+        reference_utc = reference.replace(tzinfo=timezone.utc)
+        assert result == {"count": 2, "active_count": 1, "inactive_count": 1}
+        assert active_at == reference_utc + timedelta(days=1)
+        assert inactive_at == datetime(2026, 8, 14, tzinfo=timezone.utc)
 
     
     def test_test_proxy_settings(self, client, auth_headers):
@@ -537,7 +598,7 @@ class TestAudibleIntegration:
     
     def test_product_lookup(self, client, auth_headers):
         """Test looking up a product by ASIN."""
-        with patch('lib.audible_api_search.get_product_by_asin') as mock_get_product:
+        with patch('tracker.api.get_product_by_asin') as mock_get_product:
             mock_get_product.return_value = {
                 "asin": "TEST123",
                 "title": "Test Book",
@@ -553,7 +614,7 @@ class TestAudibleIntegration:
     
     def test_audible_search(self, client, auth_headers):
         """Test searching Audible catalog."""
-        with patch('lib.audible_api_search.search_audible') as mock_search:
+        with patch('tracker.api.search_audible') as mock_search:
             mock_search.return_value = {
                 "products": [
                     {

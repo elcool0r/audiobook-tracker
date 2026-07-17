@@ -22,6 +22,7 @@ from .library import (
     touch_series_fetched,
 )
 from .settings import load_settings
+from .inactive_series import add_interval, classify_series_activity
 from .db import get_jobs_collection, get_series_collection, get_users_collection, get_user_library_collection
 from lib.audible_api_search import get_product_by_asin, DEFAULT_RESPONSE_GROUPS, run_coro_sync
 
@@ -29,6 +30,27 @@ AUTO_REFRESH_CYCLE_SEC = 24 * 60 * 60
 
 # Track last prune date so we only prune jobs once per day
 _last_jobs_prune_date = None
+
+
+def _is_inactive_for_auto_refresh(books: list[Any] | None, settings: Any, now: datetime) -> bool:
+    if not getattr(settings, "inactive_series_detection_enabled", False):
+        return False
+    return classify_series_activity(
+        books,
+        int(getattr(settings, "inactive_series_cutoff_value", 2)),
+        getattr(settings, "inactive_series_cutoff_unit", "years"),
+        now=now,
+    ).inactive
+
+
+def _next_auto_refresh(books: list[Any] | None, settings: Any, now: datetime) -> datetime:
+    if _is_inactive_for_auto_refresh(books, settings, now):
+        return add_interval(
+            now,
+            int(getattr(settings, "inactive_series_refresh_value", 1)),
+            getattr(settings, "inactive_series_refresh_unit", "months"),
+        )
+    return now + _delta_sec(AUTO_REFRESH_CYCLE_SEC)
 
 
 def _book_asin(book: Any) -> str | None:
@@ -238,10 +260,10 @@ class TaskWorker:
                 except Exception:
                     pass
             
-            # Schedule next refresh: find this series' slot in the next 24-hour cycle
-            # This maintains consistent distribution across all series
+            # Schedule the next automatic check using the active or inactive cadence.
             try:
-                next_when = _now_dt() + _delta_sec(AUTO_REFRESH_CYCLE_SEC)
+                refresh_reference = _now_dt()
+                next_when = _next_auto_refresh(books, settings, refresh_reference)
                 set_series_next_refresh(str(asin), next_when.isoformat() + "Z")
             except Exception:
                 pass
@@ -411,9 +433,10 @@ class TaskWorker:
                 # A probe is considered to have 'changed' if new audiobooks were discovered or this is the first time we have books
                 final_changed = raw_changed or new_book_added or (not old_books and bool(books_current))
 
-                # Schedule next refresh at least one full cycle in the future for both the probed ASIN and its parent
+                # Schedule the next automatic check using the newly refreshed book data.
                 try:
-                    next_when = _now_dt() + _delta_sec(AUTO_REFRESH_CYCLE_SEC)
+                    refresh_reference = _now_dt()
+                    next_when = _next_auto_refresh(books_current, settings, refresh_reference)
                     set_series_next_refresh(str(asin), next_when.isoformat() + "Z")
                     if parent_id and parent_id != asin:
                         set_series_next_refresh(str(parent_id), next_when.isoformat() + "Z")
@@ -700,7 +723,17 @@ class TaskWorker:
         count = lib_col.count_documents(filter_q)
         if not count:
             return
-        entries_cursor = lib_col.find(filter_q, {"username": 1, "series_asin": 1, "notified_new_asins": 1, "notified_releases": 1, "_id": 1}).batch_size(500)
+        entries_cursor = lib_col.find(
+            filter_q,
+            {
+                "username": 1,
+                "series_asin": 1,
+                "notified_new_asins": 1,
+                "notified_new_asins_initialized": 1,
+                "notified_releases": 1,
+                "_id": 1,
+            },
+        ).batch_size(500)
 
         user_cache: Dict[str, Dict[str, Any]] = {}
         series_cache: Dict[str, Dict[str, Any]] = {}
@@ -1117,34 +1150,34 @@ def _rebalance_auto_refresh(reference: datetime | None = None):
     if reference is None:
         reference = _now_dt()
     series_col = get_series_collection()
-    total = series_col.count_documents({})
-    if not total:
-        return
-    # Use a safe fallback in case the module-level constant isn't available at runtime
-    cycle_sec = globals().get("AUTO_REFRESH_CYCLE_SEC", 24 * 60 * 60)
-    try:
-        interval = cycle_sec / total
-    except Exception:
-        interval = cycle_sec
-    # Ensure interval is a numeric value; fall back to cycle_sec on any error
-    try:
-        interval = float(interval)
-        if interval <= 0:
-            interval = float(cycle_sec)
-    except Exception:
-        interval = float(cycle_sec)
-    now = reference
-    offset_acc = interval
-    from datetime import timezone
-    datetime_min_utc = datetime.min.replace(tzinfo=timezone.utc)
-    # Iterate cursor sorted by fetched_at (missing fetched_at sorts earliest)
-    cursor = series_col.find({}, {"_id": 1, "fetched_at": 1}).sort("fetched_at", 1)
-    ops: list[UpdateOne] = []
+    settings = load_settings()
+    cursor = series_col.find({}, {"_id": 1, "fetched_at": 1, "books": 1}).sort("fetched_at", 1)
+    active: list[dict[str, Any]] = []
+    inactive: list[dict[str, Any]] = []
     for doc in cursor:
-        offset = max(int(offset_acc), 1)
-        target = now + _delta_sec(offset)
-        ops.append(UpdateOne({"_id": doc.get("_id")}, {"$set": {"next_refresh_at": target.isoformat() + "Z"}}))
-        offset_acc += interval
+        target = inactive if _is_inactive_for_auto_refresh(doc.get("books"), settings, reference) else active
+        target.append(doc)
+    if not active and not inactive:
+        return {"count": 0, "active_count": 0, "inactive_count": 0}
+
+    ops: list[UpdateOne] = []
+
+    def _schedule_group(docs: list[dict[str, Any]], window_end: datetime) -> None:
+        if not docs:
+            return
+        window_seconds = max((window_end - reference).total_seconds(), 1.0)
+        spacing = window_seconds / len(docs)
+        for index, doc in enumerate(docs, start=1):
+            target = reference + _delta_sec(max(int(spacing * index), 1))
+            ops.append(UpdateOne({"_id": doc.get("_id")}, {"$set": {"next_refresh_at": target.isoformat() + "Z"}}))
+
+    _schedule_group(active, reference + _delta_sec(AUTO_REFRESH_CYCLE_SEC))
+    inactive_window_end = add_interval(
+        reference,
+        int(getattr(settings, "inactive_series_refresh_value", 1)),
+        getattr(settings, "inactive_series_refresh_unit", "months"),
+    )
+    _schedule_group(inactive, inactive_window_end)
 
     if ops:
         try:
@@ -1157,6 +1190,11 @@ def _rebalance_auto_refresh(reference: datetime | None = None):
                     series_col.update_one(op._filter, op._doc)
                 except Exception:
                     pass
+    return {
+        "count": len(active) + len(inactive),
+        "active_count": len(active),
+        "inactive_count": len(inactive),
+    }
 
 
 def _relationships_equal(a, b) -> bool:
@@ -1281,38 +1319,17 @@ def enqueue_test_job():
 
 
 def reschedule_all_series():
-    """Reschedule all series evenly across the manual_refresh_interval_minutes from settings."""
-    settings = load_settings()
-    series_col = get_series_collection()
-    
-    # Count and iterate cursor to avoid loading all series into memory
-    count = series_col.count_documents({})
-    if not count:
+    """Reschedule active and inactive series across their automatic refresh windows."""
+    result = _rebalance_auto_refresh()
+    count = int((result or {}).get("count", 0))
+    if count == 0:
         return {"count": 0, "message": "No series to reschedule"}
-    interval_sec = AUTO_REFRESH_CYCLE_SEC
-    now = _now_dt()
-    cursor = series_col.find({}, {"_id": 1}).batch_size(500)
-    ops: list[UpdateOne] = []
-    for i, series in enumerate(cursor):
-        # Calculate offset for this series across the 24h window
-        offset_sec = int((i / count) * interval_sec)
-        next_refresh = now + _delta_sec(offset_sec)
-        next_refresh_iso = next_refresh.isoformat() + "Z"
-        ops.append(UpdateOne({"_id": series["_id"]}, {"$set": {"next_refresh_at": next_refresh_iso}}))
-
-    if ops:
-        try:
-            for i in range(0, len(ops), 500):
-                series_col.bulk_write(ops[i : i + 500], ordered=False)
-        except Exception:
-            # Fall back to individual updates
-            for op in ops:
-                try:
-                    series_col.update_one(op._filter, op._doc)
-                except Exception:
-                    pass
-    
-    return {"count": count, "message": f"Rescheduled {count} series over 24 hours"}
+    active_count = int(result.get("active_count", 0))
+    inactive_count = int(result.get("inactive_count", 0))
+    return {
+        **result,
+        "message": f"Rescheduled {active_count} active and {inactive_count} inactive series",
+    }
 
 
 def refresh_all_series(source: str | None = "manual") -> dict:

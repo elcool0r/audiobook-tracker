@@ -3,11 +3,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, constr, Field
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Literal
 import re
 import logging
 import copy
 from math import ceil
+from starlette.concurrency import run_in_threadpool
 
 from .auth import get_current_user
 from .db import get_users_collection, get_user_library_collection, get_series_collection, get_jobs_collection
@@ -28,6 +29,15 @@ from .library import (
     compute_narrator_warnings,
 )
 from .tasks import enqueue_fetch_series_books, enqueue_test_job, enqueue_delete_series, enqueue_refresh_probe, worker
+from .inactive_series import INTERVAL_UNITS
+from .audiobookshelf import (
+    AudiobookshelfClient,
+    AudiobookshelfError,
+    clear_series_cache,
+    get_cached_series,
+    normalize_host,
+    normalize_series_title,
+)
 from lib.audible_api_search import search_audible, get_product_by_asin, set_rate, DEFAULT_RESPONSE_GROUPS
 
 api_router = APIRouter()
@@ -80,6 +90,11 @@ class SettingsSaveRequest(BaseModel):
     max_job_history: int | None = None
     auto_refresh_enabled: bool | None = None
     manual_refresh_interval_minutes: int | None = None
+    inactive_series_detection_enabled: bool | None = None
+    inactive_series_cutoff_value: int | None = Field(default=None, ge=1, le=1000)
+    inactive_series_cutoff_unit: Literal["days", "weeks", "months", "years"] | None = None
+    inactive_series_refresh_value: int | None = Field(default=None, ge=1, le=1000)
+    inactive_series_refresh_unit: Literal["days", "weeks", "months", "years"] | None = None
     response_groups: str | None = None
     secret_key: str | None = None
     user_agent: str | None = None
@@ -94,6 +109,12 @@ class SettingsSaveRequest(BaseModel):
     debug_logging: bool | None = None
     developer_mode: bool | None = None
     google_analytics_id: str | None = None
+    audiobookshelf_library_ids: list[str] | None = None
+
+
+class AudiobookshelfTestRequest(BaseModel):
+    host: str
+    api_token: str | None = None
 
 
 class SeriesBookVisibilityRequest(BaseModel):
@@ -167,7 +188,10 @@ async def api_product(asin: str):
 
 @api_router.get("/settings")
 async def api_get_settings(user=Depends(get_current_user)):
-    return load_settings()
+    settings = load_settings()
+    result = settings.model_dump(exclude={"audiobookshelf_api_token"})
+    result["audiobookshelf_api_token_configured"] = bool(settings.audiobookshelf_api_token)
+    return result
 
 @api_router.post("/settings")
 async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_current_user)):
@@ -188,6 +212,17 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
         if not get_users_collection().find_one({"$or": [{"frontpage_slug": slug_candidate}, {"username": slug_candidate}]}):
             raise HTTPException(status_code=400, detail="User not found for provided slug")
         slug = slug_candidate
+    selected_library_ids = current.audiobookshelf_library_ids
+    if payload.audiobookshelf_library_ids is not None:
+        selected_library_ids = list(dict.fromkeys(str(value) for value in payload.audiobookshelf_library_ids))
+        available_ids = {
+            str(library.get("id"))
+            for library in current.audiobookshelf_libraries
+            if isinstance(library, dict) and library.get("id")
+        }
+        if set(selected_library_ids) - available_ids:
+            raise HTTPException(status_code=400, detail="Select only libraries returned by the connection test")
+
     updated = Settings(
         rate_rps=payload.rate_rps if payload.rate_rps is not None else current.rate_rps,
         response_groups=payload.response_groups if payload.response_groups is not None else current.response_groups,
@@ -199,6 +234,11 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
         max_job_history=payload.max_job_history if payload.max_job_history is not None else current.max_job_history,
         auto_refresh_enabled=payload.auto_refresh_enabled if payload.auto_refresh_enabled is not None else current.auto_refresh_enabled,
         manual_refresh_interval_minutes=payload.manual_refresh_interval_minutes if payload.manual_refresh_interval_minutes is not None else current.manual_refresh_interval_minutes,
+        inactive_series_detection_enabled=payload.inactive_series_detection_enabled if payload.inactive_series_detection_enabled is not None else current.inactive_series_detection_enabled,
+        inactive_series_cutoff_value=payload.inactive_series_cutoff_value if payload.inactive_series_cutoff_value is not None else current.inactive_series_cutoff_value,
+        inactive_series_cutoff_unit=payload.inactive_series_cutoff_unit if payload.inactive_series_cutoff_unit is not None else current.inactive_series_cutoff_unit,
+        inactive_series_refresh_value=payload.inactive_series_refresh_value if payload.inactive_series_refresh_value is not None else current.inactive_series_refresh_value,
+        inactive_series_refresh_unit=payload.inactive_series_refresh_unit if payload.inactive_series_refresh_unit is not None else current.inactive_series_refresh_unit,
         user_agent=payload.user_agent if payload.user_agent is not None else current.user_agent,
         allow_non_admin_series_search=payload.allow_non_admin_series_search if payload.allow_non_admin_series_search is not None else current.allow_non_admin_series_search,
         skip_known_series_search=payload.skip_known_series_search if payload.skip_known_series_search is not None else current.skip_known_series_search,
@@ -207,15 +247,85 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
         debug_logging=payload.debug_logging if payload.debug_logging is not None else current.debug_logging,
         developer_mode=payload.developer_mode if payload.developer_mode is not None else current.developer_mode,
         google_analytics_id=payload.google_analytics_id if payload.google_analytics_id is not None else current.google_analytics_id,
+        audiobookshelf_host=current.audiobookshelf_host,
+        audiobookshelf_api_token=current.audiobookshelf_api_token,
+        audiobookshelf_connection_ok=current.audiobookshelf_connection_ok,
+        audiobookshelf_last_checked_at=current.audiobookshelf_last_checked_at,
+        audiobookshelf_libraries=current.audiobookshelf_libraries,
+        audiobookshelf_library_ids=selected_library_ids,
     )
     save_settings(updated)
     try:
-        if not current.auto_refresh_enabled and updated.auto_refresh_enabled:
-            # Setting toggled on: rebalance all series and ensure scheduler thread is running
+        schedule_fields = {
+            "inactive_series_detection_enabled",
+            "inactive_series_cutoff_value",
+            "inactive_series_cutoff_unit",
+            "inactive_series_refresh_value",
+            "inactive_series_refresh_unit",
+        }
+        schedule_changed = any(getattr(current, field) != getattr(updated, field) for field in schedule_fields)
+        if updated.auto_refresh_enabled and (not current.auto_refresh_enabled or schedule_changed):
             worker.ensure_scheduler_running(rebalance=True)
     except Exception:
         pass
-    return updated
+    result = updated.model_dump(exclude={"audiobookshelf_api_token"})
+    result["audiobookshelf_api_token_configured"] = bool(updated.audiobookshelf_api_token)
+    return result
+
+
+@api_router.post("/settings/audiobookshelf/test")
+async def api_test_audiobookshelf(payload: AudiobookshelfTestRequest, user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    current = load_settings()
+    try:
+        host = normalize_host(payload.host)
+        stored_token = current.audiobookshelf_api_token if host == current.audiobookshelf_host else None
+        token = (payload.api_token or stored_token or "").strip()
+        client = AudiobookshelfClient(host, token)
+        libraries = await run_in_threadpool(client.get_libraries)
+    except AudiobookshelfError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    available_ids = {library["id"] for library in libraries}
+    selected_ids = [value for value in current.audiobookshelf_library_ids if value in available_ids]
+    checked_at = _utcnow_iso()
+    updated = current.model_copy(update={
+        "audiobookshelf_host": client.host,
+        "audiobookshelf_api_token": token,
+        "audiobookshelf_connection_ok": True,
+        "audiobookshelf_last_checked_at": checked_at,
+        "audiobookshelf_libraries": libraries,
+        "audiobookshelf_library_ids": selected_ids,
+    })
+    save_settings(updated)
+    clear_series_cache()
+    return {
+        "success": True,
+        "host": client.host,
+        "libraries": libraries,
+        "selected_library_ids": selected_ids,
+        "last_checked_at": checked_at,
+        "api_token_configured": True,
+    }
+
+
+@api_router.delete("/settings/audiobookshelf")
+async def api_remove_audiobookshelf(user=Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    current = load_settings()
+    updated = current.model_copy(update={
+        "audiobookshelf_host": None,
+        "audiobookshelf_api_token": None,
+        "audiobookshelf_connection_ok": False,
+        "audiobookshelf_last_checked_at": None,
+        "audiobookshelf_libraries": [],
+        "audiobookshelf_library_ids": [],
+    })
+    save_settings(updated)
+    clear_series_cache()
+    return {"success": True}
 
 @api_router.post("/settings/test-proxy")
 async def api_test_proxy(user=Depends(get_current_user)):
@@ -1081,6 +1191,9 @@ class ProfileUpdateRequest(BaseModel):
     show_narrator_warnings: bool = True
     latest_count: int = 4  # how many latest releases to show (1-24)
     hide_narrator_warnings_for_dramatized_adaptations: bool = False
+    inactive_series_indicator_enabled: bool = False
+    inactive_series_cutoff_value: int = Field(default=2, ge=1, le=1000)
+    inactive_series_cutoff_unit: Literal["days", "weeks", "months", "years"] = "years"
 
 
 class ApiKeyCreateRequest(BaseModel):
@@ -1326,6 +1439,53 @@ async def api_list_known_series(user=Depends(get_current_user)):
             "cover": cover,
         })
     return series
+
+
+@api_router.get("/audiobookshelf/series")
+async def api_list_audiobookshelf_series(user=Depends(get_current_user)):
+    settings = load_settings()
+    user_role = user.get("role") if isinstance(user, dict) else getattr(user, "role", None)
+    if user_role != "admin" and not settings.allow_non_admin_series_search:
+        raise HTTPException(status_code=403, detail="Series search disabled for non-admin users")
+    if (
+        not settings.audiobookshelf_connection_ok
+        or not settings.audiobookshelf_host
+        or not settings.audiobookshelf_api_token
+        or not settings.audiobookshelf_library_ids
+    ):
+        raise HTTPException(status_code=409, detail="Audiobookshelf is not configured with an enabled library")
+
+    try:
+        series = await run_in_threadpool(
+            get_cached_series,
+            settings.audiobookshelf_host,
+            settings.audiobookshelf_api_token,
+            settings.audiobookshelf_library_ids,
+        )
+    except AudiobookshelfError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    known_titles: set[str] = set()
+    for document in get_series_collection().find({}, {"title": 1, "original_title": 1}):
+        for field in ("title", "original_title"):
+            normalized = normalize_series_title(str(document.get(field) or ""))
+            if normalized:
+                known_titles.add(normalized)
+
+    library_names = {
+        str(library.get("id")): str(library.get("name"))
+        for library in settings.audiobookshelf_libraries
+        if isinstance(library, dict) and library.get("id") and library.get("name")
+    }
+    result = []
+    for item in series:
+        if normalize_series_title(item.get("title", "")) in known_titles:
+            continue
+        result.append({
+            "title": item.get("title"),
+            "libraries": [library_names[value] for value in item.get("library_ids", []) if value in library_names],
+        })
+    return result
 
 
 @api_router.post("/series/{asin}/refresh")
@@ -1589,6 +1749,13 @@ async def api_test_job(user=Depends(get_current_user)):
 async def api_profile(user=Depends(get_current_user)):
     col = get_user_library_collection()
     lib_count = col.count_documents({"username": user["username"]})
+    try:
+        inactive_cutoff_value = max(1, int(user.get("inactive_series_cutoff_value") or 2))
+    except (TypeError, ValueError):
+        inactive_cutoff_value = 2
+    inactive_cutoff_unit = user.get("inactive_series_cutoff_unit") or "years"
+    if inactive_cutoff_unit not in INTERVAL_UNITS:
+        inactive_cutoff_unit = "years"
     return {
         "username": user["username"],
         "role": user.get("role", "user"),
@@ -1598,6 +1765,9 @@ async def api_profile(user=Depends(get_current_user)):
         "show_narrator_warnings": user.get("show_narrator_warnings", True),
         "hide_narrator_warnings_for_dramatized_adaptations": user.get("hide_narrator_warnings_for_dramatized_adaptations", False),
         "latest_count": int(user.get("latest_count") or 4),
+        "inactive_series_indicator_enabled": user.get("inactive_series_indicator_enabled", False),
+        "inactive_series_cutoff_value": inactive_cutoff_value,
+        "inactive_series_cutoff_unit": inactive_cutoff_unit,
     }
 
 
@@ -1627,8 +1797,17 @@ async def api_update_profile_settings(payload: ProfileUpdateRequest, user=Depend
     if latest_count < 1 or latest_count > 24:
         raise HTTPException(status_code=400, detail="latest_count must be between 1 and 24")
     col = get_users_collection()
-    col.update_one({"_id": user["_id"]}, {"$set": {"date_format": payload.date_format, "show_narrator_warnings": payload.show_narrator_warnings, "hide_narrator_warnings_for_dramatized_adaptations": payload.hide_narrator_warnings_for_dramatized_adaptations, "latest_count": latest_count}})
-    return {"status": "ok", "date_format": payload.date_format, "show_narrator_warnings": payload.show_narrator_warnings, "hide_narrator_warnings_for_dramatized_adaptations": payload.hide_narrator_warnings_for_dramatized_adaptations, "latest_count": latest_count}
+    preferences = {
+        "date_format": payload.date_format,
+        "show_narrator_warnings": payload.show_narrator_warnings,
+        "hide_narrator_warnings_for_dramatized_adaptations": payload.hide_narrator_warnings_for_dramatized_adaptations,
+        "latest_count": latest_count,
+        "inactive_series_indicator_enabled": payload.inactive_series_indicator_enabled,
+        "inactive_series_cutoff_value": payload.inactive_series_cutoff_value,
+        "inactive_series_cutoff_unit": payload.inactive_series_cutoff_unit,
+    }
+    col.update_one({"_id": user["_id"]}, {"$set": preferences})
+    return {"status": "ok", **preferences}
 
 
 @api_router.post("/profile/frontpage")
