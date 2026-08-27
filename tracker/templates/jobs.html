@@ -60,16 +60,35 @@ function render() {
     // Display series title or ASIN
     let displaySeries = j.title || j.asin || '';
     
-    tr.innerHTML = `
-      <td class="small">${j.id}</td>
-      <td>${j.type || ''}</td>
-      <td>${j.status || ''}</td>
-      <td>${j.username || ''}</td>
-      <td>${displaySeries}</td>
-      <td class="small">${startedDisplay}</td>
-      <td class="small">${duration}</td>
-      <td style="max-width: 300px; word-wrap: break-word; white-space: pre-wrap;"><pre class="small mb-0" style="white-space: pre-wrap; word-wrap: break-word;">${j.result ? JSON.stringify(j.result) : ''}</pre></td>
-    `;
+    // Job titles carry Audible-sourced series names and usernames, so build every
+    // cell with textContent rather than interpolating into innerHTML.
+    const addCell = (value, className) => {
+      const td = document.createElement('td');
+      if (className) td.className = className;
+      td.textContent = value == null ? '' : String(value);
+      tr.appendChild(td);
+      return td;
+    };
+    addCell(j.id, 'small');
+    addCell(j.type);
+    addCell(j.status);
+    addCell(j.username);
+    addCell(displaySeries);
+    addCell(startedDisplay, 'small');
+    addCell(duration, 'small');
+
+    const resultTd = document.createElement('td');
+    resultTd.style.maxWidth = '300px';
+    resultTd.style.wordWrap = 'break-word';
+    resultTd.style.whiteSpace = 'pre-wrap';
+    const resultPre = document.createElement('pre');
+    resultPre.className = 'small mb-0';
+    resultPre.style.whiteSpace = 'pre-wrap';
+    resultPre.style.wordWrap = 'break-word';
+    resultPre.textContent = j.result ? JSON.stringify(j.result) : '';
+    resultTd.appendChild(resultPre);
+    tr.appendChild(resultTd);
+
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);

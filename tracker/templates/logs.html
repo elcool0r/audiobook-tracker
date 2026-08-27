@@ -22,8 +22,16 @@ function render() {
   const tbody = document.createElement('tbody');
   logsData.forEach(l => {
     const tr = document.createElement('tr');
-    const timestamp = new Date(l.timestamp).toLocaleString();
-    tr.innerHTML = `<td>${timestamp}</td><td>${l.event}</td><td>${l.username}</td><td>${l.ip}</td><td>${l.user_agent || ''}</td><td>${l.details || ''}</td>`;
+    let timestamp;
+    try { timestamp = new Date(l.timestamp).toLocaleString(); } catch (e) { timestamp = l.timestamp; }
+    // Every field below is attacker-controlled: `username` and `user_agent` come
+    // straight off unauthenticated login attempts. Build cells with textContent so
+    // a crafted User-Agent cannot run script in an admin's session.
+    [timestamp, l.event, l.username, l.ip, l.user_agent, l.details].forEach(value => {
+      const td = document.createElement('td');
+      td.textContent = value == null ? '' : String(value);
+      tr.appendChild(td);
+    });
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);

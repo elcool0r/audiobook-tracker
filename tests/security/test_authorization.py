@@ -23,6 +23,22 @@ def db():
         yield database
 
 
+@pytest.fixture(autouse=True)
+def no_rate_limiting():
+    """The module-level Limiter keeps counters across the whole test session.
+
+    These tests exercise auth-log handling rather than throttling, so disable it
+    and restore the previous state afterwards.
+    """
+    from tracker.app import limiter
+    previous = limiter.enabled
+    limiter.enabled = False
+    limiter.reset()
+    yield
+    limiter.reset()
+    limiter.enabled = previous
+
+
 @pytest.fixture
 def client(db):
     os.environ["SECRET_KEY"] = SECRET
@@ -119,3 +135,46 @@ class TestSettingsSecrets:
                            json={"proxy_password": None})
         assert resp.status_code == 200
         assert db["settings"].find_one({"_id": "global"})["proxy_password"] is None
+
+
+class TestLogViewerEscaping:
+    """The auth log records unauthenticated input; the admin view must not execute it."""
+
+    PAYLOAD = "<img src=x onerror=alert(1)>"
+
+    def test_hostile_user_agent_is_not_reflected_as_markup(self, client, admin_cookies, db):
+        # An unauthenticated failed login is enough to plant the payload.
+        client.post("/config/login",
+                    data={"username": self.PAYLOAD, "password": "nope"},
+                    headers={"User-Agent": self.PAYLOAD})
+        entry = db["logs"].find_one({"event": "login_failed"})
+        assert entry is not None
+        assert entry["user_agent"].startswith("<img")
+
+        resp = client.get("/config/logs", cookies=admin_cookies)
+        assert resp.status_code == 200
+        # tojson escapes < and > for safe embedding in a <script> block, and the
+        # renderer uses textContent, so the raw tag must never appear.
+        assert self.PAYLOAD not in resp.text
+        assert "<img src=x" not in resp.text
+
+    def test_log_fields_are_length_bounded(self, client, db):
+        from tracker.auth import MAX_LOG_FIELD_LEN
+
+        client.post("/config/login",
+                    data={"username": "someone", "password": "nope"},
+                    headers={"User-Agent": "A" * 10000})
+        entry = db["logs"].find_one({"username": "someone"})
+        assert entry is not None
+        assert len(entry["user_agent"]) <= MAX_LOG_FIELD_LEN + 1
+
+
+class TestLoginRobustness:
+    def test_failed_login_without_client_address_does_not_500(self, client):
+        """Some ASGI transports leave request.client unset."""
+        from tracker.auth import client_ip
+
+        class _NoClient:
+            client = None
+
+        assert client_ip(_NoClient()) == "unknown"

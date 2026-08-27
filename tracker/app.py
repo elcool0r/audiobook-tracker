@@ -174,27 +174,27 @@ def create_app() -> FastAPI:
         #     csrf_protect.validate_csrf(request)
         # except CsrfProtectError:
         #     return templates.TemplateResponse("login.html", {"request": request, "error": "CSRF token invalid"})
-        from .auth import log_auth_event, is_account_locked, record_failed_attempt, record_successful_login
+        from .auth import log_auth_event, is_account_locked, record_failed_attempt, record_successful_login, client_ip
         users = get_users_collection()
         user_doc = users.find_one({"username": username})
         if not user_doc:
             settings_mod.ensure_default_admin()
             user_doc = users.find_one({"username": username})
         if not user_doc:
-            log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "User not found")
+            log_auth_event("login_failed", username, client_ip(request), request.headers.get("user-agent", ""), "User not found")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
             settings = settings_mod.load_settings()
             return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Invalid credentials", "version": __version__})
         if is_account_locked(user_doc):
-            log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "Account locked")
+            log_auth_event("login_failed", username, client_ip(request), request.headers.get("user-agent", ""), "Account locked")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
             settings = settings_mod.load_settings()
             return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Account locked due to too many failed attempts", "version": __version__})
         if not verify_password(password, user_doc.get("password_hash", "")):
             record_failed_attempt(username)
-            log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "Invalid password")
+            log_auth_event("login_failed", username, client_ip(request), request.headers.get("user-agent", ""), "Invalid password")
             logger.warning(f"Failed login attempt for username: {username}")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
@@ -202,7 +202,7 @@ def create_app() -> FastAPI:
             return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Invalid credentials", "version": __version__})
         record_successful_login(username)
         token = create_access_token({"sub": username})
-        log_auth_event("login_success", username, request.client.host, request.headers.get("user-agent", ""))
+        log_auth_event("login_success", username, client_ip(request), request.headers.get("user-agent", ""))
         logger.info(f"Successful login for username: {username}")
         login_attempts.labels(status="success").inc()
         resp = RedirectResponse(url=_p("/library"), status_code=302)
@@ -212,7 +212,7 @@ def create_app() -> FastAPI:
 
     @app.get(_p("/logout"))
     async def logout(request: Request):
-        from .auth import log_auth_event, SECRET_KEY, ALGORITHM
+        from .auth import log_auth_event, SECRET_KEY, ALGORITHM, client_ip
         username = "unknown"
         token = request.cookies.get(TOKEN_NAME)
         if token:
@@ -223,10 +223,10 @@ def create_app() -> FastAPI:
             except Exception as e:
                 logger.warning(
                     "Failed to decode JWT during logout from %s: %s",
-                    request.client.host if request.client else "unknown",
+                    client_ip(request),
                     str(e),
                 )
-        log_auth_event("logout", username, request.client.host, request.headers.get("user-agent", ""))
+        log_auth_event("logout", username, client_ip(request), request.headers.get("user-agent", ""))
         resp = RedirectResponse(url=_p("/login"), status_code=302)
         resp.delete_cookie(TOKEN_NAME)
         return resp

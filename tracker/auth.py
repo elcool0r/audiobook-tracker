@@ -41,14 +41,29 @@ def _ensure_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+# Auth log fields come from unauthenticated requests, so bound what we persist.
+MAX_LOG_FIELD_LEN = 512
+
+
+def _truncate(value, limit: int = MAX_LOG_FIELD_LEN) -> str:
+    text = "" if value is None else str(value)
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def client_ip(request) -> str:
+    """Best-effort client address; `request.client` is None on some transports."""
+    client = getattr(request, "client", None)
+    return getattr(client, "host", None) or "unknown"
+
+
 def log_auth_event(event: str, username: str, ip: str, user_agent: str, details: str = ""):
     logs_col = get_logs_collection()
     logs_col.insert_one({
         "event": event,
-        "username": username,
-        "ip": ip,
-        "user_agent": user_agent,
-        "details": details,
+        "username": _truncate(username, 128),
+        "ip": _truncate(ip, 64),
+        "user_agent": _truncate(user_agent),
+        "details": _truncate(details),
         "timestamp": datetime.now(timezone.utc)
     })
 
