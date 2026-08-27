@@ -85,16 +85,26 @@ def is_account_locked(user_doc):
     return False
 
 
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
+
+
 def record_failed_attempt(username: str):
     users_col = get_users_collection()
     user_doc = users_col.find_one({"username": username})
-    if user_doc:
-        failed_attempts = user_doc.get("failed_attempts", 0) + 1
-        update = {"failed_attempts": failed_attempts}
-        if failed_attempts >= 5:
-            lock_until = datetime.now(timezone.utc) + timedelta(minutes=15)
-            update["lock_until"] = lock_until
-        users_col.update_one({"username": username}, {"$set": update})
+    if not user_doc:
+        return
+    # Reset the counter once an expired lock has served its time. Without this the
+    # counter stayed at the threshold forever, so a single failed attempt every 15
+    # minutes kept any known account — `admin` by default — permanently locked out.
+    previous = user_doc.get("failed_attempts", 0)
+    if user_doc.get("lock_until") and not is_account_locked(user_doc):
+        previous = 0
+    failed_attempts = previous + 1
+    update = {"failed_attempts": failed_attempts, "lock_until": None}
+    if failed_attempts >= MAX_FAILED_ATTEMPTS:
+        update["lock_until"] = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)
+    users_col.update_one({"username": username}, {"$set": update})
 
 
 def record_successful_login(username: str):

@@ -214,14 +214,20 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
         # Respect explicit nulls so proxy fields can be cleared when desired.
         return getattr(payload, field) if field in provided_fields else current_value
 
-    slug_candidate = (payload.default_frontpage_slug or "").strip()
-    slug = None
-    if slug_candidate:
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", slug_candidate):
-            raise HTTPException(status_code=400, detail="Slug may contain letters, numbers, hyphen, underscore")
-        if not get_users_collection().find_one({"$or": [{"frontpage_slug": slug_candidate}, {"username": slug_candidate}]}):
-            raise HTTPException(status_code=400, detail="User not found for provided slug")
-        slug = slug_candidate
+    # Every other field preserves the stored value when the client omits it. Doing
+    # otherwise here meant a partial update (e.g. {"debug_logging": true}) silently
+    # cleared the default frontpage, taking the site's public root offline.
+    if "default_frontpage_slug" not in provided_fields:
+        slug = current.default_frontpage_slug
+    else:
+        slug_candidate = (payload.default_frontpage_slug or "").strip()
+        slug = None
+        if slug_candidate:
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", slug_candidate):
+                raise HTTPException(status_code=400, detail="Slug may contain letters, numbers, hyphen, underscore")
+            if not get_users_collection().find_one({"$or": [{"frontpage_slug": slug_candidate}, {"username": slug_candidate}]}):
+                raise HTTPException(status_code=400, detail="User not found for provided slug")
+            slug = slug_candidate
     selected_library_ids = current.audiobookshelf_library_ids
     if payload.audiobookshelf_library_ids is not None:
         selected_library_ids = list(dict.fromkeys(str(value) for value in payload.audiobookshelf_library_ids))
@@ -346,13 +352,31 @@ async def api_test_proxy(user=Depends(get_current_user)):
     if not settings.proxy_url:
         return {"success": False, "error": "Proxy URL is not configured"}
     proxies = _build_proxies(settings)
-    import requests
+    if not proxies:
+        return {"success": False, "error": "Proxy is not configured"}
     try:
         from lib.audible_api_search import _SESSION
-        response = _SESSION.get("https://www.audible.com", proxies=proxies, timeout=10)
-        if response.status_code == 200:
-            return {"success": True, "message": f"Proxy connection successful (status: {response.status_code})"}
-        return {"success": False, "error": f"Unexpected status code: {response.status_code}"}
+        # Compare the egress address with and without the proxy. A plain 200 only
+        # proves the internet is reachable, which is what made a misconfigured
+        # proxy report success for so long.
+        proxied = await run_in_threadpool(
+            lambda: _SESSION.get("https://api.ipify.org", proxies=proxies, timeout=10)
+        )
+        if proxied.status_code != 200:
+            return {"success": False, "error": f"Unexpected status code: {proxied.status_code}"}
+        proxied_ip = proxied.text.strip()
+        try:
+            direct_ip = (await run_in_threadpool(
+                lambda: _SESSION.get("https://api.ipify.org", timeout=10)
+            )).text.strip()
+        except Exception:
+            direct_ip = None
+        if direct_ip and proxied_ip == direct_ip:
+            return {
+                "success": False,
+                "error": f"Traffic is not being routed through the proxy (egress address is {proxied_ip} either way)",
+            }
+        return {"success": True, "message": f"Proxy connection successful (egress address {proxied_ip})"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -691,10 +715,10 @@ async def api_series_info(asin: str, user=Depends(get_current_user)):
 
 @api_router.post("/series/{asin}/refresh")
 async def api_series_refresh(asin: str, user=Depends(get_current_user)):
-    """Manually enqueue a refresh probe for a series (admin only)."""
+    """Enqueue a refresh probe: cheap, and only refetches books if the series changed."""
     _require_admin(user)
     job_id = enqueue_refresh_probe(asin, response_groups=None, source="manual")
-    return {"job_id": job_id}
+    return {"asin": asin, "job_id": job_id}
 
 
 @api_router.put("/series/{asin}/title")
@@ -1474,8 +1498,9 @@ async def api_list_audiobookshelf_series(user=Depends(get_current_user)):
     return result
 
 
-@api_router.post("/series/{asin}/refresh")
-async def api_refresh_series(asin: str, payload: SeriesRefreshRequest | None = None, user=Depends(get_current_user)):
+@api_router.post("/series/{asin}/refetch")
+async def api_refetch_series(asin: str, payload: SeriesRefreshRequest | None = None, user=Depends(get_current_user)):
+    """Force a full re-fetch of every book, bypassing the probe's change check."""
     _require_admin(user)
     settings = load_settings()
     response_groups = (payload.response_groups if payload else None) or settings.response_groups or DEFAULT_RESPONSE_GROUPS

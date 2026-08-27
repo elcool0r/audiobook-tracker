@@ -10,6 +10,7 @@ import re
 import requests
 import unicodedata
 
+from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from lib.audible_api_search import DEFAULT_RESPONSE_GROUPS, get_product_by_asin, run_coro_sync, _SESSION
@@ -427,7 +428,6 @@ async def add_to_library(username: str, item: LibraryItem, skip_fetch: bool = Fa
                 resp = await get_product_by_asin(item.asin, auth_token=None, proxies=proxies, user_agent=settings.user_agent)
                 product = resp.get("product") if isinstance(resp, dict) and "product" in resp else resp
                 if isinstance(product, dict) and product.get("issue_date") == "2200-01-01":
-                    from fastapi import HTTPException
                     raise HTTPException(status_code=400, detail="Cannot add series with placeholder issue_date")
             except HTTPException:
                 raise
@@ -546,9 +546,12 @@ def _build_proxies(settings) -> Optional[Dict[str, str]]:
         proto_split = proxy.split("://", 1)
         if len(proto_split) == 2:
             proxy = f"{proto_split[0]}://{settings.proxy_username}:{settings.proxy_password}@{proto_split[1]}"
+    # `requests` keys proxies by bare scheme ("http"/"https"). The httpx-style
+    # "http://" keys used previously matched nothing, so every request silently
+    # went direct while the UI reported the proxy as working.
     return {
-        "http://": proxy,
-        "https://": proxy,
+        "http": proxy,
+        "https": proxy,
     }
 
 
