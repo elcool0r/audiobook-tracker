@@ -96,7 +96,6 @@ class SettingsSaveRequest(BaseModel):
     inactive_series_refresh_value: int | None = Field(default=None, ge=1, le=1000)
     inactive_series_refresh_unit: Literal["days", "weeks", "months", "years"] | None = None
     response_groups: str | None = None
-    secret_key: str | None = None
     user_agent: str | None = None
     allow_non_admin_series_search: bool | None = None
     skip_known_series_search: bool | None = None
@@ -186,12 +185,23 @@ async def api_product(asin: str):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+# Settings fields that must never leave the server. `secret_key` signs session JWTs,
+# so leaking it to any authenticated caller is a straight path to admin impersonation.
+SECRET_SETTINGS_FIELDS = {"secret_key", "proxy_password", "audiobookshelf_api_token"}
+
+
+def _public_settings(settings: Settings) -> Dict[str, Any]:
+    """Serialize settings for the admin UI with every secret replaced by a `*_configured` flag."""
+    result = settings.model_dump(exclude=SECRET_SETTINGS_FIELDS)
+    result["audiobookshelf_api_token_configured"] = bool(settings.audiobookshelf_api_token)
+    result["proxy_password_configured"] = bool(settings.proxy_password)
+    return result
+
+
 @api_router.get("/settings")
 async def api_get_settings(user=Depends(get_current_user)):
-    settings = load_settings()
-    result = settings.model_dump(exclude={"audiobookshelf_api_token"})
-    result["audiobookshelf_api_token_configured"] = bool(settings.audiobookshelf_api_token)
-    return result
+    _require_admin(user)
+    return _public_settings(load_settings())
 
 @api_router.post("/settings")
 async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_current_user)):
@@ -226,7 +236,7 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
     updated = Settings(
         rate_rps=payload.rate_rps if payload.rate_rps is not None else current.rate_rps,
         response_groups=payload.response_groups if payload.response_groups is not None else current.response_groups,
-        secret_key=payload.secret_key if payload.secret_key is not None else current.secret_key,
+        secret_key=current.secret_key,
         proxy_enabled=_pick("proxy_enabled", current.proxy_enabled),
         proxy_url=_pick("proxy_url", current.proxy_url),
         proxy_username=_pick("proxy_username", current.proxy_username),
@@ -268,9 +278,7 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
             worker.ensure_scheduler_running(rebalance=True)
     except Exception:
         pass
-    result = updated.model_dump(exclude={"audiobookshelf_api_token"})
-    result["audiobookshelf_api_token_configured"] = bool(updated.audiobookshelf_api_token)
-    return result
+    return _public_settings(updated)
 
 
 @api_router.post("/settings/audiobookshelf/test")

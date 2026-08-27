@@ -103,7 +103,12 @@
         </div>
         <div class="col-md-6 mb-3">
           <label class="form-label">Proxy password (optional)</label>
-          <input class="form-control" name="proxy_password" type="password" value="{{ settings.proxy_password or '' }}" data-bwignore="true" />
+          <input class="form-control" name="proxy_password" type="password" autocomplete="new-password" data-bwignore="true" />
+          <div class="form-text" id="proxyPasswordHelp"></div>
+          <div class="form-check mt-1" id="proxyPasswordClearWrap" style="display:none">
+            <input class="form-check-input" type="checkbox" id="proxyPasswordClear">
+            <label class="form-check-label small" for="proxyPasswordClear">Remove the saved proxy password</label>
+          </div>
         </div>
       </div>
       <button type="button" class="btn btn-sm btn-outline-secondary" id="testProxyBtn">Test Proxy Connection</button>
@@ -326,8 +331,22 @@ async function loadSettings() {
     const proxyUserEl = document.querySelector('[name=proxy_username]');
     if (proxyUserEl) proxyUserEl.value = currentSettings.proxy_username || '';
 
+    // proxy_password is write-only: the server never sends it back. Leaving the field
+    // blank keeps the stored value; typing a new one replaces it.
     const proxyPassEl = document.querySelector('[name=proxy_password]');
-    if (proxyPassEl) proxyPassEl.value = currentSettings.proxy_password || '';
+    if (proxyPassEl) proxyPassEl.value = '';
+    const proxyPassHelp = document.getElementById('proxyPasswordHelp');
+    if (proxyPassHelp) {
+      proxyPassHelp.textContent = currentSettings.proxy_password_configured
+        ? 'A password is saved. Leave blank to keep it, or type a new one to replace it.'
+        : 'No password saved.';
+    }
+    const proxyPassClearWrap = document.getElementById('proxyPasswordClearWrap');
+    const proxyPassClear = document.getElementById('proxyPasswordClear');
+    if (proxyPassClear) proxyPassClear.checked = false;
+    if (proxyPassClearWrap) {
+      proxyPassClearWrap.style.display = currentSettings.proxy_password_configured ? '' : 'none';
+    }
 
     // proxy_enabled: default OFF unless explicitly true
     const proxyEnabledEl = document.querySelector('[name=proxy_enabled]');
@@ -418,12 +437,20 @@ form.addEventListener('submit', async (ev) => {
     proxy_enabled: form.proxy_enabled ? form.proxy_enabled.checked || false : (currentSettings && currentSettings.proxy_enabled) || false,
     proxy_url: form.proxy_url ? form.proxy_url.value || null : (currentSettings && currentSettings.proxy_url) || null,
     proxy_username: form.proxy_username ? form.proxy_username.value || null : (currentSettings && currentSettings.proxy_username) || null,
-    proxy_password: form.proxy_password ? form.proxy_password.value || null : (currentSettings && currentSettings.proxy_password) || null,
-    secret_key: currentSettings && currentSettings.secret_key || null,
     users_can_edit_frontpage_slug: form.users_can_edit_frontpage_slug ? form.users_can_edit_frontpage_slug.checked || false : (currentSettings && currentSettings.users_can_edit_frontpage_slug) || false,
     google_analytics_id: form.google_analytics_id ? form.google_analytics_id.value || null : (currentSettings && currentSettings.google_analytics_id) || null,
     audiobookshelf_library_ids: Array.from(document.querySelectorAll('.audiobookshelf-library:checked')).map(el => el.value)
   };
+  // Omit proxy_password to keep the stored one; send an explicit null only when the
+  // admin cleared a field that previously held a value.
+  const typedProxyPassword = form.proxy_password ? form.proxy_password.value : '';
+  const clearProxyPassword = document.getElementById('proxyPasswordClear');
+  if (typedProxyPassword) {
+    data.proxy_password = typedProxyPassword;
+  } else if ((clearProxyPassword && clearProxyPassword.checked) ||
+             (currentSettings && !currentSettings.proxy_password_configured)) {
+    data.proxy_password = null;
+  }
   const resp = await fetch(apiPath('/api/settings'), {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
   if (resp.ok) {
     document.getElementById('saved').style.display = 'block';

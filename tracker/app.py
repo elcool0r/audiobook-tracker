@@ -241,7 +241,7 @@ def create_app() -> FastAPI:
     # Dashboard view removed; library is the default landing page
 
     @app.get(_p("/settings"), response_class=HTMLResponse)
-    async def settings_get(request: Request, user=Depends(get_current_user)):
+    async def settings_get(request: Request, user=Depends(get_admin_user)):
         settings = settings_mod.load_settings()
         return templates.TemplateResponse("settings.html", {"request": request, "settings": settings, "user": user, "version": __version__})
 
