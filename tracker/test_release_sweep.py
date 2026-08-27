@@ -3,17 +3,28 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-# Ensure mongomock is used for tests
-os.environ.pop("MONGO_URI", None)
-
 from tracker.db import get_db
 from tracker.tasks import worker
 
 
-def test_check_due_release_notifications_picks_up_raw_pubdt():
-    # Clear the lru_cache to ensure we get a fresh connection
+@pytest.fixture
+def db(monkeypatch):
+    """A fresh in-memory database.
+
+    MONGO_URI has to be cleared inside the test rather than at import time: other
+    test modules set it from their fixtures, so an import-time pop is undone by
+    whatever ran before this module.
+    """
+    monkeypatch.delenv("MONGO_URI", raising=False)
+    monkeypatch.setenv("ALLOW_IN_MEMORY_DB", "1")
     get_db.cache_clear()
-    db = get_db()
+    try:
+        yield get_db()
+    finally:
+        get_db.cache_clear()
+
+
+def test_check_due_release_notifications_picks_up_raw_pubdt(db):
     # Clean collections
     db.users.delete_many({})
     db.user_library.delete_many({})

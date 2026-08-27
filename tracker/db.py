@@ -1,3 +1,4 @@
+import logging
 import warnings
 from functools import lru_cache
 import os
@@ -17,27 +18,38 @@ except ImportError:  # fallback if mongomock is not installed
     mongomock = None
 
 
+def _in_memory_db_allowed() -> bool:
+    return os.getenv("ALLOW_IN_MEMORY_DB", "").strip().lower() in {"1", "true", "yes"}
+
+
 @lru_cache()
 def get_db():
+    """Return the application database.
+
+    A real MONGO_URI must reach a real server. Falling back to an in-memory
+    database on a connection error would let the app start and accept writes that
+    are silently discarded on restart, so connection failures are raised instead.
+    The in-memory backend is opt-in via ALLOW_IN_MEMORY_DB and is meant for tests.
+    """
+    db_name = os.getenv("MONGO_DB", "audiobook_tracker")
     uri = os.getenv("MONGO_URI")
     if uri:
-        # Try connecting with a short timeout; if unavailable, fall back to mongomock for tests
-        try:
-            client = MongoClient(uri, serverSelectionTimeoutMS=3000)
-            # Quick ping to detect unreachable servers
-            client.admin.command('ping')
-        except Exception:
-            if mongomock is not None:
-                client = mongomock.MongoClient()
-            else:
-                # Re-raise original exception to make failure explicit when mongomock isn't available
-                raise
-    else:
-        if mongomock is None:
-            raise RuntimeError("MONGO_URI not set and mongomock is not installed; please install mongomock or set MONGO_URI")
-        client = mongomock.MongoClient()
-    db_name = os.getenv("MONGO_DB", "audiobook_tracker")
-    return client[db_name]
+        client = MongoClient(uri, serverSelectionTimeoutMS=3000)
+        # Fail fast and loudly rather than degrading to a throwaway database.
+        client.admin.command("ping")
+        return client[db_name]
+
+    if not _in_memory_db_allowed():
+        raise RuntimeError(
+            "MONGO_URI is not set. Set MONGO_URI to a MongoDB connection string, or set "
+            "ALLOW_IN_MEMORY_DB=1 to use a non-persistent in-memory database (tests only)."
+        )
+    if mongomock is None:
+        raise RuntimeError("ALLOW_IN_MEMORY_DB is set but mongomock is not installed.")
+    logging.warning(
+        "Using an in-memory database (ALLOW_IN_MEMORY_DB): data will NOT persist across restarts."
+    )
+    return mongomock.MongoClient()[db_name]
 
 
 def get_series_collection():

@@ -30,7 +30,7 @@ export SECRET_KEY="test_secret_key_local"
 
 echo "📦 Installing dependencies..."
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 echo "🧪 Running unit tests..."
 unset MONGO_URI  # Use mongomock for unit tests

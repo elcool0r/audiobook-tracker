@@ -8,8 +8,8 @@ import os
 @pytest.fixture
 def client():
     """Create a test client for the FastAPI app."""
-    # Set up test environment variables
-    os.environ['MONGO_URI'] = 'mongodb://localhost:27017'
+    # MONGO_URI is intentionally not set here: this fixture patches the collection
+    # accessors, and exporting it globally leaked into other test modules.
     os.environ['MONGO_DB'] = 'test_audiobook_tracker'
     os.environ['SECRET_KEY'] = 'test_secret_key'
 
