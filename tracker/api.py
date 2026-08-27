@@ -150,7 +150,7 @@ class DeveloperSeriesDuplicateRequest(BaseModel):
 
 
 @api_router.post("/search")
-async def api_search(req: SearchRequest):
+async def api_search(req: SearchRequest, user=Depends(get_current_user)):
     settings = load_settings()
     if req.num_results is None:
         num_results = settings.default_num_results
@@ -171,7 +171,7 @@ async def api_search(req: SearchRequest):
 
 
 @api_router.get("/product/{asin}")
-async def api_product(asin: str):
+async def api_product(asin: str, user=Depends(get_current_user)):
     settings = load_settings()
     set_rate(settings.rate_rps)
     logger.info(f"Product request: asin='{asin}'")
@@ -642,48 +642,26 @@ async def api_public_frontpage(slug: str):
     }
 
 
+# The /public/* routes are unauthenticated. They serve only what is already
+# cached: an anonymous caller must not be able to drive outbound Audible requests
+# or create series documents. Populating a series is an authenticated action
+# (see /series/books/{asin} and the refresh jobs).
 @api_router.get("/public/series/{asin}")
 async def api_public_series_info(asin: str):
     from .library import get_series_document
     series = get_series_document(asin)
-    if series and series.get("books"):
-        return series
-    # Fallback: fetch books and cache
-    settings = load_settings()
-    response_groups = settings.response_groups or DEFAULT_RESPONSE_GROUPS
-    books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
-    if books:
-        target_asin = parent_asin or asin
-        set_series_books(target_asin, books)
-        if isinstance(parent_obj, dict):
-            set_series_raw(target_asin, parent_obj)
-            if parent_asin and parent_asin != asin:
-                set_series_raw(parent_asin, parent_obj)
-        updated = get_series_document(target_asin)
-        if updated:
-            return updated
-    if series:
-        return series
-    raise HTTPException(status_code=404, detail="Series not found")
+    if not series:
+        raise HTTPException(status_code=404, detail="Series not found")
+    return series
 
 
 @api_router.get("/public/series/{asin}/books")
 async def api_public_series_books(asin: str):
     from .library import get_series_document
     series = get_series_document(asin)
-    if series and series.get("books"):
-        return series.get("books")
-    settings = load_settings()
-    response_groups = settings.response_groups or DEFAULT_RESPONSE_GROUPS
-    books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
-    if books:
-        target_asin = parent_asin or asin
-        set_series_books(target_asin, books)
-        if isinstance(parent_obj, dict):
-            set_series_raw(target_asin, parent_obj)
-            if parent_asin and parent_asin != asin:
-                set_series_raw(parent_asin, parent_obj)
-    return books
+    if not series:
+        raise HTTPException(status_code=404, detail="Series not found")
+    return series.get("books") or []
 
 
 @api_router.get("/series/books/{asin}")

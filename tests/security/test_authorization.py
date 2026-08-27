@@ -178,3 +178,52 @@ class TestLoginRobustness:
             client = None
 
         assert client_ip(_NoClient()) == "unknown"
+
+
+class TestUnauthenticatedSurface:
+    """Anonymous callers must not drive outbound Audible traffic or create records."""
+
+    def test_search_and_product_require_authentication(self, client):
+        assert client.post("/config/api/search", json={"title": "dune"}).status_code == 401
+        assert client.get("/config/api/product/B00ABCDEFG").status_code == 401
+
+    def test_public_series_does_not_fetch_or_create(self, client, db):
+        from unittest.mock import patch
+
+        with patch("tracker.library._fetch_series_books_internal") as fetch:
+            resp = client.get("/config/api/public/series/NOTREAL123")
+            books = client.get("/config/api/public/series/NOTREAL123/books")
+
+        assert resp.status_code == 404
+        assert books.status_code == 404
+        fetch.assert_not_called()
+        # and nothing was inserted for the unknown ASIN
+        assert db["series"].find_one({"_id": "NOTREAL123"}) is None
+
+    def test_public_series_serves_cached_data(self, client, db):
+        db["series"].insert_one({
+            "_id": "S1", "title": "Cached", "books": [{"asin": "B1", "title": "Book 1"}],
+        })
+        resp = client.get("/config/api/public/series/S1")
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "Cached"
+        assert client.get("/config/api/public/series/S1/books").json()[0]["asin"] == "B1"
+
+
+class TestSeriesMetadataWritesDoNotCreate:
+    """Metadata helpers must not conjure titleless series the scheduler then polls."""
+
+    def test_metadata_helpers_do_not_upsert(self, db):
+        from tracker.library import (
+            set_series_raw, touch_series_fetched, set_series_next_refresh,
+        )
+        set_series_raw("GHOST", {"title": "nope"})
+        touch_series_fetched("GHOST")
+        set_series_next_refresh("GHOST", "2030-01-01T00:00:00Z")
+        assert db["series"].find_one({"_id": "GHOST"}) is None
+
+    def test_metadata_helpers_update_an_existing_series(self, db):
+        db["series"].insert_one({"_id": "REAL", "title": "Real", "books": []})
+        from tracker.library import set_series_next_refresh
+        set_series_next_refresh("REAL", "2030-01-01T00:00:00Z")
+        assert db["series"].find_one({"_id": "REAL"})["next_refresh_at"] == "2030-01-01T00:00:00Z"

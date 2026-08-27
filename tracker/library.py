@@ -344,22 +344,27 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
     return processed_books
 
 
+# These three helpers write metadata onto an existing series. They deliberately do
+# not upsert: a series document is created only by `ensure_series_document` or by
+# `set_series_books`, both of which supply a title. Upserting here previously let
+# any probed ASIN — including one from an unauthenticated request — insert a
+# titleless stub that the refresh scheduler would then poll forever.
 def set_series_raw(asin: str, raw: Dict[str, Any] | None) -> None:
-    # Avoid creating/upserting placeholder series entries
+    # Avoid storing placeholder series entries
     if isinstance(raw, dict) and raw.get("issue_date") == "2200-01-01":
         return
     series_col = get_series_collection()
-    series_col.update_one({"_id": asin}, {"$set": {"raw": raw}}, upsert=True)
+    series_col.update_one({"_id": asin}, {"$set": {"raw": raw}})
 
 
 def touch_series_fetched(asin: str) -> None:
     series_col = get_series_collection()
-    series_col.update_one({"_id": asin}, {"$set": {"fetched_at": _now_iso()}}, upsert=True)
+    series_col.update_one({"_id": asin}, {"$set": {"fetched_at": _now_iso()}})
 
 
 def set_series_next_refresh(asin: str, when_iso: str | None) -> None:
     series_col = get_series_collection()
-    series_col.update_one({"_id": asin}, {"$set": {"next_refresh_at": when_iso}}, upsert=True)
+    series_col.update_one({"_id": asin}, {"$set": {"next_refresh_at": when_iso}})
 
 
 def get_user_library(username: str) -> List[LibraryItem]:
