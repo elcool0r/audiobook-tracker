@@ -1572,77 +1572,13 @@ async def api_database_stats(user=Depends(get_current_user)):
     return {"collections": stats}
 
 
-@api_router.post("/database/dump-restore")
-async def api_database_dump_restore(user=Depends(get_current_user)):
-    _require_admin(user)
-    from .db import get_db
-    
-    db = get_db()
-    
-    # Get size before
-    total_before = 0
-    for col_name in ["series", "user_library", "users", "jobs", "settings", "api_keys"]:
-        try:
-            stats = db.command("collStats", col_name)
-            total_before += stats.get("size", 0) + stats.get("totalIndexSize", 0)
-        except Exception:
-            pass
-    
-    try:
-        # Dump all data from all collections into memory
-        backup = {}
-        for col_name in db.list_collection_names():
-            if col_name.startswith("system."):
-                continue
-            collection = db[col_name]
-            # Get all documents and indexes
-            backup[col_name] = {
-                "documents": list(collection.find({})),
-                "indexes": list(collection.list_indexes())
-            }
-        
-        # Drop all collections (this forces MongoDB to release space)
-        for col_name in db.list_collection_names():
-            if not col_name.startswith("system."):
-                db.drop_collection(col_name)
-        
-        # Restore all data
-        for col_name, data in backup.items():
-            collection = db[col_name]
-            # Insert documents if any exist
-            if data["documents"]:
-                collection.insert_many(data["documents"])
-            # Recreate indexes (skip the default _id index)
-            for index_info in data["indexes"]:
-                if index_info["name"] != "_id_":
-                    keys = list(index_info["key"].items())
-                    options = {k: v for k, v in index_info.items() if k not in ["key", "v", "ns"]}
-                    try:
-                        collection.create_index(keys, **options)
-                    except Exception:
-                        pass  # Index might already exist or be invalid
-        
-        # Get size after
-        total_after = 0
-        for col_name in ["series", "user_library", "users", "jobs", "settings", "api_keys"]:
-            try:
-                stats = db.command("collStats", col_name)
-                total_after += stats.get("size", 0) + stats.get("totalIndexSize", 0)
-            except Exception:
-                pass
-        
-        return {
-            "status": "ok",
-            "size_before": total_before,
-            "size_after": total_after
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Operation failed: {str(e)}")
+class PurgeAndCompactRequest(BaseModel):
+    """Explicit confirmation for a destructive, non-undoable maintenance action."""
+    confirm: Literal["purge-and-compact"]
 
 
 @api_router.post("/series/purge-and-compact")
-async def api_purge_and_compact(user=Depends(get_current_user)):
+async def api_purge_and_compact(payload: PurgeAndCompactRequest, user=Depends(get_current_user)):
     _require_admin(user)
     from .db import get_db
     

@@ -195,10 +195,8 @@
       <p class="text-warning small"><strong>Note:</strong> These operations may take several minutes and will lock the database. The application may be unresponsive during this time.</p>
       <button type="button" class="btn btn-sm btn-outline-info me-2" id="showDbStatsBtn">Show Database Stats</button>
       <button type="button" class="btn btn-sm btn-outline-danger me-2 two-step-confirm" id="purgeAndCompactBtn">Purge & Compact Database</button>
-      <button type="button" class="btn btn-sm btn-outline-warning two-step-confirm" id="dumpRestoreBtn">Dump & Restore (Reclaim Space)</button>
       <div id="dbStatsResult" class="mt-3" style="display:none"></div>
       <div id="purgeResult" class="mt-2" style="display:none"></div>
-      <div id="dumpRestoreResult" class="mt-2" style="display:none"></div>
     </div>
   </div>
 {% endif %}
@@ -751,7 +749,7 @@ if (purgeAndCompactBtn) purgeAndCompactBtn.addEventListener('click', async () =>
   resultDiv.innerHTML = '<strong>⏳ Working...</strong> This may take several minutes. Please wait...';
   
   try {
-    const resp = await fetch(apiPath('/api/series/purge-and-compact'), { method: 'POST' });
+    const resp = await fetch(apiPath('/api/series/purge-and-compact'), { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ confirm: 'purge-and-compact' }) });
     const data = await resp.json();
     
     resultDiv.style.display = 'block';
@@ -776,65 +774,5 @@ if (purgeAndCompactBtn) purgeAndCompactBtn.addEventListener('click', async () =>
   }
 });
 
-const dumpRestoreBtn = document.getElementById('dumpRestoreBtn');
-if (dumpRestoreBtn) dumpRestoreBtn.addEventListener('click', async () => {
-  const btn = document.getElementById('dumpRestoreBtn');
-  const resultDiv = document.getElementById('dumpRestoreResult');
-  
-  // Two-step confirm without browser alert
-  if (btn.dataset.confirmed !== 'true') {
-    btn.dataset.confirmed = 'true';
-    btn.textContent = 'Confirm';
-    btn.classList.remove('btn-outline-warning');
-    btn.classList.add('btn-warning');
-    setTimeout(() => {
-      if (btn.dataset.confirmed === 'true') {
-        btn.dataset.confirmed = '';
-        btn.textContent = 'Dump & Restore (Reclaim Space)';
-        btn.classList.add('btn-outline-warning');
-        btn.classList.remove('btn-warning');
-      }
-    }, 3000);
-    return;
-  }
-  
-  btn.disabled = true;
-  document.getElementById('showDbStatsBtn').disabled = true;
-  document.getElementById('purgeAndCompactBtn').disabled = true;
-  btn.textContent = 'Dumping & Restoring...';
-  resultDiv.style.display = 'block';
-  resultDiv.className = 'alert alert-info mt-2';
-  resultDiv.innerHTML = '<strong>⏳ Working...</strong> Dumping database, rebuilding, and restoring. This will take several minutes. Please wait...';
-  
-  try {
-    const resp = await fetch(apiPath('/api/database/dump-restore'), { method: 'POST' });
-    const data = await resp.json();
-    
-    resultDiv.style.display = 'block';
-    if (resp.ok) {
-      resultDiv.className = 'alert alert-success mt-2';
-      const beforeMB = (data.size_before / (1024 * 1024)).toFixed(2);
-      const afterMB = (data.size_after / (1024 * 1024)).toFixed(2);
-      const savedMB = (beforeMB - afterMB).toFixed(2);
-      const savedPercent = ((savedMB / beforeMB) * 100).toFixed(1);
-      resultDiv.innerHTML = `<strong>✓ Success!</strong> Database rebuilt successfully.<br>
-        Size: ${beforeMB} MB → ${afterMB} MB (saved ${savedMB} MB, ${savedPercent}% reduction)<br>
-        <em class="small">Disk space will be reclaimed shortly. Run "Show Database Stats" to verify.</em>`;
-    } else {
-      resultDiv.className = 'alert alert-danger mt-2';
-      const message = data.error || data.detail || data.message || 'Operation failed.';
-      resultDiv.innerHTML = `<strong>✗ Error!</strong> ${message}`;
-    }
-  } catch (err) {
-    resultDiv.style.display = 'block';
-    resultDiv.className = 'alert alert-danger mt-2';
-    resultDiv.innerHTML = `<strong>✗ Error!</strong> ${err.message}`;
-  } finally {
-    btn.disabled = false;
-    document.getElementById('showDbStatsBtn').disabled = false;
-    document.getElementById('purgeAndCompactBtn').disabled = false;
-    btn.textContent = 'Dump & Restore (Reclaim Space)';
-  }
-});
 </script>
 {% endblock %}
