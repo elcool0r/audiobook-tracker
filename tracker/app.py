@@ -21,7 +21,7 @@ from .frontpage import render_frontpage_for_slug
 from .auth import get_current_user, verify_password, create_access_token, TOKEN_NAME, ACCESS_TOKEN_EXPIRE_SECONDS
 from .db import get_users_collection, get_series_collection
 from .api import api_router
-from .library import ensure_indexes, rebuild_series_user_counts
+from .library import ensure_indexes, rebuild_series_user_counts, migrate_inline_cover_images
 
 
 def convert_for_json(obj):
@@ -97,6 +97,7 @@ async def get_admin_user(request: Request):
 async def _start_worker():
     settings_mod.ensure_default_admin()
     ensure_indexes()
+    migrate_inline_cover_images()
     rebuild_series_user_counts()
     # Cleanup old logs
     settings = settings_mod.load_settings()

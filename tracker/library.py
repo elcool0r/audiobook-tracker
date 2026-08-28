@@ -5,7 +5,6 @@ import asyncio
 from datetime import datetime, timezone
 from .app_helpers import parse_date_naive
 from typing import Any, Dict, List, Optional
-import base64
 import re
 import requests
 import unicodedata
@@ -13,7 +12,7 @@ import unicodedata
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from lib.audible_api_search import DEFAULT_RESPONSE_GROUPS, get_product_by_asin, run_coro_sync, _SESSION
+from lib.audible_api_search import DEFAULT_RESPONSE_GROUPS, get_product_by_asin, run_coro_sync
 
 from pymongo import ASCENDING, UpdateOne
 
@@ -492,6 +491,54 @@ def ensure_indexes() -> None:
     users_col.create_index([("frontpage_slug", ASCENDING)], unique=True, sparse=True)
 
 
+def migrate_inline_cover_images() -> int:
+    """Replace inline base64 covers with their source URLs.
+
+    Covers were previously embedded as `data:` URIs inside the series document.
+    Each book kept its source URL in `image_url`, so the rewrite is lossless where
+    that field survives; where it does not, the cover is cleared and repopulated
+    by the next refresh. Returns the number of series updated.
+    """
+    series_col = get_series_collection()
+    ops: List[UpdateOne] = []
+    projection = {"books": 1, "cover_image": 1}
+    for doc in series_col.find({}, projection):
+        books = doc.get("books")
+        if not isinstance(books, list):
+            continue
+        changed = False
+        for book in books:
+            if not isinstance(book, dict):
+                continue
+            image = book.get("image")
+            if isinstance(image, str) and image.startswith("data:"):
+                book["image"] = book.get("image_url") or None
+                changed = True
+        cover = doc.get("cover_image")
+        new_cover = cover
+        if isinstance(cover, str) and cover.startswith("data:"):
+            new_cover = next(
+                (b.get("image") for b in books
+                 if isinstance(b, dict) and not b.get("hidden") and b.get("image")),
+                None,
+            )
+            changed = True
+        if changed:
+            ops.append(UpdateOne({"_id": doc.get("_id")},
+                                 {"$set": {"books": books, "cover_image": new_cover}}))
+    updated = 0
+    for i in range(0, len(ops), 200):
+        chunk = ops[i:i + 200]
+        try:
+            result = series_col.bulk_write(chunk, ordered=False)
+            updated += result.modified_count
+        except Exception:
+            logging.exception("Failed to migrate inline cover images for a batch")
+    if updated:
+        logging.info("Migrated inline cover images for %d series", updated)
+    return updated
+
+
 def rebuild_series_user_counts() -> None:
     """Recompute series.user_count from the library entries that actually exist."""
     user_col = get_user_library_collection()
@@ -690,18 +737,16 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
         # Use parent_asin (determined earlier) as the series ASIN for relationship entries
         primary_series_asin = parent_asin or series_asin
         book["series"] = [{"asin": primary_series_asin, "sequence": seq}] if primary_series_asin else []
-        # fetch image data and store
-        book["image_url"] = book["image"]  # Store original URL for notifications
-        try:
-            img_resp = _SESSION.get(book["image"], timeout=10, proxies=proxies)
-            if img_resp.ok:
-                encoded = base64.b64encode(img_resp.content).decode("ascii")
-                ctype = img_resp.headers.get("Content-Type", "image/jpeg")
-                book["image"] = f"data:{ctype};base64,{encoded}"
-            else:
-                book["image"] = None
-        except Exception:
-            book["image"] = None
+        # Store the cover as a URL, not as inline bytes.
+        #
+        # Covers used to be downloaded and embedded as base64 data URIs. A 60-book
+        # series then carried roughly 5-10 MB of image data inside one document,
+        # heading for MongoDB's hard 16 MB limit — past which set_series_books
+        # raises DocumentTooLarge, the generic handler records a job error, and the
+        # series silently stops updating. It also meant every frontpage render
+        # loaded all of it into memory and re-sent it to the browser, since data
+        # URIs cannot be cached separately from the page.
+        book["image_url"] = book["image"]
         books.append(book)
 
     filtered_books: List[Dict[str, Any]] = books
