@@ -170,6 +170,12 @@ audiobook_series_total 15
 # HELP audiobook_users_total Total number of users
 # TYPE audiobook_users_total gauge
 audiobook_users_total 3
+
+# Background thread liveness. These threads are not restarted automatically,
+# so a sustained 0 means refreshes or notifications have stopped.
+audiobook_worker_thread_up 1
+audiobook_scheduler_thread_up 1
+audiobook_notifier_thread_up 1
 ```
 
 ## Configuration

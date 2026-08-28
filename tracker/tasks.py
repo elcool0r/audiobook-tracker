@@ -1151,7 +1151,20 @@ def _rebalance_auto_refresh(reference: datetime | None = None):
         reference = _now_dt()
     series_col = get_series_collection()
     settings = load_settings()
-    cursor = series_col.find({}, {"_id": 1, "fetched_at": 1, "books": 1}).sort("fetched_at", 1)
+    # Project only the book fields _is_inactive_for_auto_refresh reads. Pulling the
+    # whole `books` array meant every completed refresh job re-read the entire
+    # corpus just to bucket series as active or inactive.
+    cursor = series_col.find(
+        {},
+        {
+            "_id": 1,
+            "fetched_at": 1,
+            "books.hidden": 1,
+            "books.release_date": 1,
+            "books.publication_datetime": 1,
+            "books.raw.publication_datetime": 1,
+        },
+    ).sort("fetched_at", 1)
     active: list[dict[str, Any]] = []
     inactive: list[dict[str, Any]] = []
     for doc in cursor:
@@ -1336,7 +1349,7 @@ def refresh_all_series(source: str | None = "manual") -> dict:
     """Enqueue a refresh probe for every series and return job ids."""
     series_col = get_series_collection()
     jobs = []
-    for doc in series_col.find({}):
+    for doc in series_col.find({}, {"_id": 1}):
         asin = doc.get("_id")
         if not asin:
             continue

@@ -70,6 +70,12 @@ series_count = _get_or_create_metric('audiobook_series_total', Gauge, 'Total num
 user_count = _get_or_create_metric('audiobook_users_total', Gauge, 'Total number of users')
 login_attempts = _get_or_create_metric('audiobook_login_attempts_total', Counter, 'Total login attempts', ['status'])
 failed_logins = _get_or_create_metric('audiobook_failed_logins_total', Counter, 'Total failed logins')
+# The background threads die silently: nothing restarts them and nothing reports
+# their absence, so the first symptom is "notifications stopped weeks ago" on an
+# otherwise healthy-looking app. Expose their liveness so it can be alerted on.
+worker_thread_up = _get_or_create_metric('audiobook_worker_thread_up', Gauge, 'Job worker thread alive')
+scheduler_thread_up = _get_or_create_metric('audiobook_scheduler_thread_up', Gauge, 'Refresh scheduler thread alive')
+notifier_thread_up = _get_or_create_metric('audiobook_notifier_thread_up', Gauge, 'Release notifier thread alive')
 
 def _p(path: str) -> str:
     """Prefix a route path with the configured base."""
@@ -124,11 +130,15 @@ def create_app() -> FastAPI:
         # Shutdown
         await _stop_worker()
 
+    # The schema and docs routes are registered manually below so they can be
+    # gated on admin + developer mode. FastAPI's built-ins take no dependencies,
+    # so /config/docs and /config/openapi.json were readable by anyone, despite
+    # the README stating they require developer mode.
     app = FastAPI(
-        docs_url=_p("/docs"),
-        redoc_url=_p("/redoc"),
-        openapi_url=_p("/openapi.json"),
-        lifespan=lifespan
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
     )
     app.state.limiter = limiter
     app.add_middleware(SlowAPIMiddleware)
@@ -316,10 +326,37 @@ def create_app() -> FastAPI:
         settings = settings_mod.load_settings()
         return templates.TemplateResponse("logs.html", {"request": request, "user": user, "logs": logs, "settings": settings, "version": __version__})
 
+    async def _require_developer_docs(request: Request):
+        user = await get_admin_user(request)
+        if not getattr(settings_mod.load_settings(), "developer_mode", False):
+            raise HTTPException(status_code=404, detail="Not Found")
+        return user
+
+    @app.get(_p("/openapi.json"), include_in_schema=False)
+    async def openapi_schema(user=Depends(_require_developer_docs)):
+        return app.openapi()
+
+    @app.get(_p("/docs"), include_in_schema=False)
+    async def swagger_docs(user=Depends(_require_developer_docs)):
+        from fastapi.openapi.docs import get_swagger_ui_html
+        return get_swagger_ui_html(openapi_url=_p("/openapi.json"), title="Audiobook Tracker API")
+
+    @app.get(_p("/redoc"), include_in_schema=False)
+    async def redoc_docs(user=Depends(_require_developer_docs)):
+        from fastapi.openapi.docs import get_redoc_html
+        return get_redoc_html(openapi_url=_p("/openapi.json"), title="Audiobook Tracker API")
+
     @app.get("/metrics")
     async def metrics():
         series_count.set(get_series_collection().count_documents({}))
         user_count.set(get_users_collection().count_documents({}))
+        for gauge, thread in (
+            (worker_thread_up, worker._thread),
+            (scheduler_thread_up, worker._scheduler_thread),
+            (notifier_thread_up, worker._release_notifier_thread),
+        ):
+            if gauge is not None:
+                gauge.set(1 if thread is not None and thread.is_alive() else 0)
         return Response(generate_latest(), media_type="text/plain")
 
     app.include_router(api_router, prefix=_p("/api"))

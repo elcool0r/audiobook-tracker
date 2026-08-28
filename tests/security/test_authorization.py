@@ -250,3 +250,24 @@ class TestSessionCookie:
                            follow_redirects=False)
         assert resp.status_code == 302
         assert "Secure" in resp.headers["set-cookie"]
+
+
+class TestApiDocsGating:
+    """README: "/config/docs - API documentation (requires developer mode)"."""
+
+    def test_docs_and_schema_are_not_public(self, client):
+        for path in ("/config/docs", "/config/redoc", "/config/openapi.json"):
+            assert client.get(path).status_code == 401, path
+
+    def test_docs_are_hidden_from_non_admins(self, client, user_cookies):
+        for path in ("/config/docs", "/config/openapi.json"):
+            assert client.get(path, cookies=user_cookies).status_code == 403, path
+
+    def test_admin_needs_developer_mode(self, client, admin_cookies, db):
+        assert client.get("/config/openapi.json", cookies=admin_cookies).status_code == 404
+
+        db["settings"].update_one({"_id": "global"}, {"$set": {"developer_mode": True}})
+        resp = client.get("/config/openapi.json", cookies=admin_cookies)
+        assert resp.status_code == 200
+        assert "paths" in resp.json()
+        assert client.get("/config/docs", cookies=admin_cookies).status_code == 200
