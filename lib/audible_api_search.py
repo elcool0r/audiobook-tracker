@@ -142,25 +142,43 @@ def set_rate(rps: float) -> None:
         _min_interval = 1.0 / rps_val
 
 
-async def api_get(url: str, headers: Optional[Dict[str, str]] = None, params: Optional[Dict[str, str]] = None, timeout: int = 60, proxies: Optional[Dict[str, str]] = None):
-    """Rate-limited requests.get wrapper."""
+def _reserve_request_slot() -> float:
+    """Claim the next rate-limited slot, returning how long the caller must wait.
+
+    Only the timestamp arithmetic happens under the lock. Holding a blocking
+    threading.Lock across an `await` previously stopped the event loop thread
+    outright: the background loop could hold it for the duration of a 60s Audible
+    request while a coroutine on uvicorn's loop blocked trying to acquire it,
+    freezing every in-flight HTTP request.
+    """
     global _last_request_time
     with _rate_lock:
         now = time.monotonic()
         wait = _min_interval - (now - _last_request_time)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        try:
-            # Use shared session to improve connection reuse
-            resp = await asyncio.to_thread(_SESSION.get, url, headers=headers, params=params, timeout=timeout, proxies=proxies)
-            _last_request_time = time.monotonic()
-            # Increment counter for Audible API calls
-            if url.startswith(BASE_URL):
-                audible_api_calls.inc()
-            return resp
-        except Exception as e:
-            logging.error(f"HTTP request failed: url={url}, error={str(e)}")
-            raise
+        if wait <= 0:
+            _last_request_time = now
+            return 0.0
+        # Reserve the slot we are about to wait for so concurrent callers queue
+        # behind it instead of all waking to the same instant.
+        _last_request_time = now + wait
+        return wait
+
+
+async def api_get(url: str, headers: Optional[Dict[str, str]] = None, params: Optional[Dict[str, str]] = None, timeout: int = 60, proxies: Optional[Dict[str, str]] = None):
+    """Rate-limited requests.get wrapper."""
+    wait = _reserve_request_slot()
+    if wait > 0:
+        await asyncio.sleep(wait)
+    try:
+        # Use shared session to improve connection reuse
+        resp = await asyncio.to_thread(_SESSION.get, url, headers=headers, params=params, timeout=timeout, proxies=proxies)
+        # Increment counter for Audible API calls
+        if url.startswith(BASE_URL):
+            audible_api_calls.inc()
+        return resp
+    except Exception as e:
+        logging.error(f"HTTP request failed: url={url}, error={str(e)}")
+        raise
 
 
 def configure_logger(debug: bool) -> None:
