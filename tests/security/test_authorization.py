@@ -227,3 +227,26 @@ class TestSeriesMetadataWritesDoNotCreate:
         from tracker.library import set_series_next_refresh
         set_series_next_refresh("REAL", "2030-01-01T00:00:00Z")
         assert db["series"].find_one({"_id": "REAL"})["next_refresh_at"] == "2030-01-01T00:00:00Z"
+
+
+class TestSessionCookie:
+    def test_cookie_is_httponly_lax_and_scoped_to_root(self, client, db):
+        from tracker.security import get_password_hash
+        db["users"].update_one({"username": "boss"},
+                               {"$set": {"password_hash": get_password_hash("pw")}})
+        resp = client.post("/config/login", data={"username": "boss", "password": "pw"},
+                           follow_redirects=False)
+        assert resp.status_code == 302
+        header = resp.headers["set-cookie"]
+        assert "HttpOnly" in header
+        assert "SameSite=lax" in header.replace("samesite", "SameSite")
+        assert "Path=/" in header
+
+    def test_force_secure_cookies_env_marks_cookie_secure(self, client, db, monkeypatch):
+        """Behind a proxy whose forwarded headers don't survive, TLS must still be
+        assertable — otherwise the session cookie travels without Secure."""
+        monkeypatch.setenv("FORCE_SECURE_COOKIES", "1")
+        resp = client.post("/config/login", data={"username": "boss", "password": "pw"},
+                           follow_redirects=False)
+        assert resp.status_code == 302
+        assert "Secure" in resp.headers["set-cookie"]

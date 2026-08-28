@@ -28,7 +28,7 @@ def _format_time_left(release_dt: _dt, now: _dt) -> tuple[str, int | None, int |
     return _fmt(release_dt, now)
 
 
-from .auth import get_current_user, verify_password, create_access_token, TOKEN_NAME
+from .auth import get_current_user, verify_password, create_access_token, TOKEN_NAME, ACCESS_TOKEN_EXPIRE_SECONDS
 from .db import get_users_collection, get_series_collection
 from .api import api_router
 from .library import ensure_indexes, rebuild_series_user_counts, visible_books
@@ -92,6 +92,19 @@ failed_logins = _get_or_create_metric('audiobook_failed_logins_total', Counter, 
 def _p(path: str) -> str:
     """Prefix a route path with the configured base."""
     return f"{BASE_PATH}{path}"
+
+def _use_secure_cookies(request: Request) -> bool:
+    """Whether to mark the session cookie Secure.
+
+    Relies on --proxy-headers being enabled so request.url.scheme reflects
+    X-Forwarded-Proto. FORCE_SECURE_COOKIES=1 covers setups that terminate TLS
+    somewhere the forwarded headers do not survive.
+    """
+    import os
+    if os.getenv("FORCE_SECURE_COOKIES", "").strip().lower() in {"1", "true", "yes"}:
+        return True
+    return request.url.scheme == "https"
+
 
 async def get_admin_user(request: Request):
     user = await get_current_user(request)
@@ -206,8 +219,15 @@ def create_app() -> FastAPI:
         logger.info(f"Successful login for username: {username}")
         login_attempts.labels(status="success").inc()
         resp = RedirectResponse(url=_p("/library"), status_code=302)
-        secure = request.url.scheme == "https"
-        resp.set_cookie(TOKEN_NAME, token, httponly=True, secure=secure)
+        resp.set_cookie(
+            TOKEN_NAME,
+            token,
+            httponly=True,
+            secure=_use_secure_cookies(request),
+            samesite="lax",
+            max_age=ACCESS_TOKEN_EXPIRE_SECONDS,
+            path="/",
+        )
         return resp
 
     @app.get(_p("/logout"))
@@ -228,7 +248,7 @@ def create_app() -> FastAPI:
                 )
         log_auth_event("logout", username, client_ip(request), request.headers.get("user-agent", ""))
         resp = RedirectResponse(url=_p("/login"), status_code=302)
-        resp.delete_cookie(TOKEN_NAME)
+        resp.delete_cookie(TOKEN_NAME, path="/")
         return resp
 
     @app.exception_handler(HTTPException)
