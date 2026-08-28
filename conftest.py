@@ -14,3 +14,7 @@ if ROOT not in sys.path:
 
 os.environ.setdefault("ALLOW_IN_MEMORY_DB", "1")
 os.environ.setdefault("SECRET_KEY", "test_secret_key")
+# The first admin account now requires explicit credentials (see
+# tracker.settings.ensure_default_admin); supply them for the test deployment.
+os.environ.setdefault("ADMIN_USERNAME", "admin")
+os.environ.setdefault("ADMIN_PASSWORD", "admin")

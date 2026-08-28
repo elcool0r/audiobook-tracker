@@ -76,11 +76,29 @@ def default_settings() -> Settings:
     )
 
 
+class MissingAdminCredentials(RuntimeError):
+    """Raised when the first admin account cannot be created safely."""
+
+
 def ensure_default_admin():
+    """Create the first admin account, if there are no users yet.
+
+    ADMIN_USERNAME and ADMIN_PASSWORD are required. They used to default to
+    admin/admin, which meant following the quick-start produced an
+    internet-reachable deployment with credentials published in the README — while
+    the README's own configuration section claimed there was no default. This only
+    affects a first boot against an empty database; existing installs are
+    untouched.
+    """
     users = get_users_collection()
-    admin_username = os.getenv("ADMIN_USERNAME", "admin")
-    admin_password = os.getenv("ADMIN_PASSWORD", "admin")
     if users.count_documents({}) == 0:
+        admin_username = (os.getenv("ADMIN_USERNAME") or "").strip()
+        admin_password = os.getenv("ADMIN_PASSWORD") or ""
+        if not admin_username or not admin_password:
+            raise MissingAdminCredentials(
+                "No users exist yet and the first admin cannot be created: set "
+                "ADMIN_USERNAME and ADMIN_PASSWORD, then restart."
+            )
         users.insert_one({
             "username": admin_username,
             "password_hash": get_password_hash(admin_password),
@@ -95,6 +113,13 @@ def ensure_default_admin():
 
 
 def load_settings() -> Settings:
+    """Read global settings, with env vars taking precedence.
+
+    Deliberately free of side effects: this runs on nearly every request, and
+    provisioning the admin account from here meant an unrelated failure in that
+    path would surface as a 500 on every page. Account creation happens once at
+    startup (see tracker.app._start_worker).
+    """
     col = get_settings_collection()
     doc = col.find_one({"_id": "global"})
     if not doc:
@@ -103,13 +128,11 @@ def load_settings() -> Settings:
         if os.getenv("SECRET_KEY"):
             s.secret_key = os.getenv("SECRET_KEY")
         col.insert_one({"_id": "global", **s.model_dump()})
-        ensure_default_admin()
         return s
     settings_obj = Settings.model_validate({k: v for k, v in doc.items() if k != "_id"})
     # Override with env vars if set
     if os.getenv("SECRET_KEY"):
         settings_obj.secret_key = os.getenv("SECRET_KEY")
-    ensure_default_admin()
     return settings_obj
 
 

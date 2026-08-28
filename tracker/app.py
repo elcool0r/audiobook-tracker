@@ -191,9 +191,6 @@ def create_app() -> FastAPI:
         users = get_users_collection()
         user_doc = users.find_one({"username": username})
         if not user_doc:
-            settings_mod.ensure_default_admin()
-            user_doc = users.find_one({"username": username})
-        if not user_doc:
             log_auth_event("login_failed", username, client_ip(request), request.headers.get("user-agent", ""), "User not found")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()

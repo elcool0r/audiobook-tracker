@@ -83,3 +83,42 @@ def test_a_non_last_admin_can_still_be_deleted(client, admin_cookies, db):
                             "password_hash": get_password_hash("pw"), "role": "admin"})
     assert client.delete("/config/api/users/boss2", cookies=admin_cookies).status_code == 200
     assert db["users"].find_one({"username": "boss2"}) is None
+
+
+class TestFirstAdminProvisioning:
+    """There must be no built-in admin/admin account."""
+
+    def test_refuses_to_create_an_admin_without_credentials(self, db, monkeypatch):
+        from tracker.settings import ensure_default_admin, MissingAdminCredentials
+
+        db["users"].delete_many({})
+        monkeypatch.delenv("ADMIN_USERNAME", raising=False)
+        monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
+        with pytest.raises(MissingAdminCredentials):
+            ensure_default_admin()
+        assert db["users"].count_documents({}) == 0
+
+    def test_creates_the_admin_from_the_configured_credentials(self, db, monkeypatch):
+        from tracker.settings import ensure_default_admin
+        from tracker.security import verify_password
+
+        db["users"].delete_many({})
+        monkeypatch.setenv("ADMIN_USERNAME", "owner")
+        monkeypatch.setenv("ADMIN_PASSWORD", "a-strong-password")
+        ensure_default_admin()
+
+        created = db["users"].find_one({"username": "owner"})
+        assert created["role"] == "admin"
+        assert verify_password("a-strong-password", created["password_hash"])
+        assert db["users"].find_one({"username": "admin"}) is None
+
+    def test_load_settings_has_no_admin_side_effect(self, db, monkeypatch):
+        """load_settings runs on nearly every request; provisioning from there
+        turned a configuration problem into a 500 on every page."""
+        from tracker.settings import load_settings
+
+        db["users"].delete_many({})
+        monkeypatch.delenv("ADMIN_USERNAME", raising=False)
+        monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
+        load_settings()  # must not raise
+        assert db["users"].count_documents({}) == 0
