@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from tracker.app import _get_publication_dt
+from tracker.frontpage import _get_publication_dt
 from tracker.db import get_series_collection
 
 
@@ -41,7 +41,7 @@ def test_get_publication_dt_prefers_book_raw(mocker):
 
 
 def test_format_time_left_hours():
-    from tracker.app import _format_time_left
+    from tracker.app_helpers import format_time_left as _format_time_left
     now = datetime(2026,1,5,20,0,0)
     release = datetime(2026,1,6,2,30,0)  # 6.5 hours later
     s, hours, days = _format_time_left(release, now)
@@ -51,7 +51,7 @@ def test_format_time_left_hours():
 
 
 def test_format_time_left_days():
-    from tracker.app import _format_time_left
+    from tracker.app_helpers import format_time_left as _format_time_left
     now = datetime(2026,1,1,0,0,0)
     release = datetime(2026,1,3,10,0,0)  # ~2.416 days => 3 days when rounded up
     s, hours, days = _format_time_left(release, now)
