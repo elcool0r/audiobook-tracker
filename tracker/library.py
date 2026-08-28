@@ -493,6 +493,7 @@ def ensure_indexes() -> None:
 
 
 def rebuild_series_user_counts() -> None:
+    """Recompute series.user_count from the library entries that actually exist."""
     user_col = get_user_library_collection()
     pipeline = [
         {"$match": {"series_asin": {"$exists": True}}},
@@ -503,7 +504,13 @@ def rebuild_series_user_counts() -> None:
     ops = [UpdateOne({"_id": asin}, {"$set": {"user_count": count}}) for asin, count in counts.items()]
     if ops:
         series_col.bulk_write(ops, ordered=False)
-    series_col.update_many({"user_count": {"$exists": False}}, {"$set": {"user_count": 0}})
+    # Series with no remaining subscribers produce no aggregation row, so they have
+    # to be zeroed explicitly; otherwise a stale count lingers forever once the last
+    # user removes the series or their account is deleted.
+    series_col.update_many(
+        {"_id": {"$nin": list(counts.keys())}},
+        {"$set": {"user_count": 0}},
+    )
 
 
 def _extract_products(response: Any) -> List[Dict[str, Any]]:

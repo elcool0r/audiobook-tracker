@@ -1318,20 +1318,46 @@ async def api_update_user(username: str, payload: UserUpdateRequest, user=Depend
         update["date_format"] = payload.date_format
     if not update:
         raise HTTPException(status_code=400, detail="No changes")
-    res = col.update_one({"username": username}, {"$set": update})
-    return {"status": "ok"}
+    col.update_one({"username": username}, {"$set": update})
+
+    # user_library, api_keys and the notification sweepers all key on `username`.
+    # Renaming only the users document orphaned the account's whole library, left
+    # series.user_count inflated, and silently invalidated the user's live session.
+    new_username = update.get("username")
+    if new_username and new_username != username:
+        get_user_library_collection().update_many(
+            {"username": username}, {"$set": {"username": new_username}}
+        )
+        from .db import get_api_keys_collection
+        get_api_keys_collection().update_many(
+            {"username": username}, {"$set": {"username": new_username}}
+        )
+    return {"status": "ok", "username": new_username or username}
 
 
 @api_router.delete("/users/{username}")
 async def api_delete_user(username: str, user=Depends(get_current_user)):
     _require_admin(user)
-    if username == "admin":
-        raise HTTPException(status_code=400, detail="Cannot delete default admin")
     col = get_users_collection()
-    res = col.delete_one({"username": username})
-    if res.deleted_count == 0:
+    target = col.find_one({"username": username})
+    if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    return {"status": "ok"}
+    # Guard the last admin by role. The previous check hard-coded the name "admin",
+    # so a deployment using ADMIN_USERNAME could delete its only real admin while
+    # protecting an account that did not exist.
+    if target.get("role") == "admin" and col.count_documents({"role": "admin"}) <= 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the last admin")
+
+    col.delete_one({"username": username})
+    # Remove the account's library rather than orphaning it, then correct the
+    # per-series subscriber counts the deleted rows were contributing to.
+    removed = get_user_library_collection().delete_many({"username": username})
+    from .db import get_api_keys_collection
+    get_api_keys_collection().delete_many({"username": username})
+    if removed.deleted_count:
+        from .library import rebuild_series_user_counts
+        rebuild_series_user_counts()
+    return {"status": "ok", "library_entries_removed": removed.deleted_count}
 
 
 # --- Series admin (admin) ---
