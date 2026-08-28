@@ -16,6 +16,7 @@ from lib.audible_api_search import DEFAULT_RESPONSE_GROUPS, get_product_by_asin,
 
 from pymongo import ASCENDING, UpdateOne
 
+from . import covers
 from .db import get_series_collection, get_user_library_collection, get_users_collection, get_jobs_collection
 
 
@@ -264,6 +265,40 @@ def _deduplicate_books_by_title(books: List[Dict[str, Any]]) -> List[Dict[str, A
     return deduped
 
 
+def _cache_book_cover(book: Dict[str, Any], existing_book: Dict[str, Any] | None, proxies) -> None:
+    """Download `book`'s cover into the local cache, revalidating against
+    whatever was cached for this book before.
+
+    `book["image"]` arrives holding the remote Audible URL (set by
+    `_book_summary`/`_fetch_series_books_internal`); this rewrites it to the
+    local `/covers/...` path on success. On failure it falls back to the
+    previously cached local path if one exists, then to the remote URL itself,
+    so a transient fetch error never blanks a cover that was showing fine.
+    """
+    origin_url = book.get("image")
+    if not origin_url or str(origin_url).startswith(covers.URL_PREFIX + "/"):
+        return
+    prev_key = (existing_book or {}).get("image_cache_key")
+    prev_etag = (existing_book or {}).get("image_etag")
+    local_path, cache_key, etag = covers.cache_cover(
+        origin_url, previous_key=prev_key, previous_etag=prev_etag, proxies=proxies
+    )
+    book["image_url"] = origin_url
+    if local_path:
+        book["image"] = local_path
+        book["image_cache_key"] = cache_key
+        book["image_etag"] = etag
+        return
+    # Caching failed. Prefer an existing local copy over the raw remote URL.
+    existing_local = (existing_book or {}).get("image")
+    if isinstance(existing_local, str) and existing_local.startswith(covers.URL_PREFIX + "/") and covers.local_path_for_key(prev_key or ""):
+        book["image"] = existing_local
+        book["image_cache_key"] = prev_key
+        book["image_etag"] = prev_etag
+    else:
+        book["image"] = origin_url
+
+
 def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if books is None:
         books = []
@@ -283,12 +318,17 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
     series_doc = series_col.find_one({"_id": asin}, {"ignore_narrator_warnings": 1}) or {}
     series_ignore = bool(series_doc.get("ignore_narrator_warnings", False))
 
+    from .settings import load_settings
+    cover_proxies = _build_proxies(load_settings())
+
     processed_books: List[Dict[str, Any]] = []
     for book in books:
         if not isinstance(book, dict):
             continue
         key = _book_identity(book)
-        existing_hidden = existing_map.get(key, {}).get("hidden") if key else None
+        existing_book = existing_map.get(key) if key else None
+        _cache_book_cover(book, existing_book, cover_proxies)
+        existing_hidden = (existing_book or {}).get("hidden") if key else None
         incoming_hidden = book.get("hidden")
         if isinstance(incoming_hidden, bool):
             book_hidden = incoming_hidden
@@ -296,7 +336,7 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
             book_hidden = bool(existing_hidden)
         book["hidden"] = book_hidden
         # Preserve any existing ignore_narrator_warning flag unless explicitly provided
-        existing_ignore = existing_map.get(key, {}).get("ignore_narrator_warning") if key else None
+        existing_ignore = (existing_book or {}).get("ignore_narrator_warning") if key else None
         incoming_ignore = book.get("ignore_narrator_warning")
         if isinstance(incoming_ignore, bool):
             book_ignore = incoming_ignore
@@ -309,6 +349,16 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
             book["ignore_narrator_warning_set_by_series"] = True
         book["ignore_narrator_warning"] = book_ignore
         processed_books.append(book)
+
+    # Any book that dropped out of the series (removed by Audible, or de-duped
+    # away) leaves its cached cover file orphaned on disk unless cleaned up here.
+    retained_keys = {b.get("image_cache_key") for b in processed_books if b.get("image_cache_key")}
+    for old_book in existing_books:
+        if not isinstance(old_book, dict):
+            continue
+        old_key = old_book.get("image_cache_key")
+        if old_key and old_key not in retained_keys:
+            covers.delete_cached_cover(old_key)
 
     cover_image = None
     for book in processed_books:
@@ -491,14 +541,17 @@ def ensure_indexes() -> None:
     users_col.create_index([("frontpage_slug", ASCENDING)], unique=True, sparse=True)
 
 
-def migrate_inline_cover_images() -> int:
-    """Replace inline base64 covers with their source URLs.
+def migrate_cover_images_to_local_cache() -> int:
+    """Move every book cover to the local disk cache, run once at startup.
 
-    Covers were previously embedded as `data:` URIs inside the series document.
-    Each book kept its source URL in `image_url`, so the rewrite is lossless where
-    that field survives; where it does not, the cover is cleared and repopulated
-    by the next refresh. Returns the number of series updated.
+    Handles two generations of prior storage: covers embedded as base64 `data:`
+    URIs (recovered via the sibling `image_url` field, then downloaded), and
+    covers stored as bare remote URLs (downloaded directly). Already-migrated
+    books (`image` already a local `/covers/...` path) are left untouched, so
+    this is safe to run on every startup. Returns the number of series updated.
     """
+    from .settings import load_settings
+    proxies = _build_proxies(load_settings())
     series_col = get_series_collection()
     ops: List[UpdateOne] = []
     projection = {"books": 1, "cover_image": 1}
@@ -512,30 +565,48 @@ def migrate_inline_cover_images() -> int:
                 continue
             image = book.get("image")
             if isinstance(image, str) and image.startswith("data:"):
+                # Older documents embedded bytes with no recoverable URL at all.
                 book["image"] = book.get("image_url") or None
-                changed = True
+                image = book["image"]
+            if not (isinstance(image, str) and image.startswith(("http://", "https://"))):
+                # Already a local /covers/ path, already None with nothing
+                # recoverable, or some other value untouched by prior generations.
+                continue
+            prev_key = book.get("image_cache_key")
+            prev_etag = book.get("image_etag")
+            local_path, cache_key, etag = covers.cache_cover(
+                image, previous_key=prev_key, previous_etag=prev_etag, proxies=proxies
+            )
+            book["image_url"] = image
+            if local_path:
+                book["image"] = local_path
+                book["image_cache_key"] = cache_key
+                book["image_etag"] = etag
+            changed = True
         cover = doc.get("cover_image")
-        new_cover = cover
-        if isinstance(cover, str) and cover.startswith("data:"):
+        if isinstance(cover, str) and (cover.startswith("data:") or cover.startswith(("http://", "https://"))):
             new_cover = next(
                 (b.get("image") for b in books
                  if isinstance(b, dict) and not b.get("hidden") and b.get("image")),
                 None,
             )
-            changed = True
+            doc_cover_changed = new_cover != cover
+            if doc_cover_changed:
+                changed = True
+                cover = new_cover
         if changed:
             ops.append(UpdateOne({"_id": doc.get("_id")},
-                                 {"$set": {"books": books, "cover_image": new_cover}}))
+                                 {"$set": {"books": books, "cover_image": cover}}))
     updated = 0
-    for i in range(0, len(ops), 200):
-        chunk = ops[i:i + 200]
+    for i in range(0, len(ops), 50):
+        chunk = ops[i:i + 50]
         try:
             result = series_col.bulk_write(chunk, ordered=False)
             updated += result.modified_count
         except Exception:
-            logging.exception("Failed to migrate inline cover images for a batch")
+            logging.exception("Failed to migrate cover images for a batch")
     if updated:
-        logging.info("Migrated inline cover images for %d series", updated)
+        logging.info("Migrated cover images to the local cache for %d series", updated)
     return updated
 
 

@@ -1113,6 +1113,9 @@ async def api_developer_delete_series_book(
         raise HTTPException(status_code=404, detail="Book not found")
     cover_image = _select_cover_image(new_books)
     series_col.update_one({"_id": asin}, {"$set": {"books": new_books, "cover_image": cover_image}})
+    if isinstance(removed.get("image_cache_key"), str):
+        from . import covers
+        covers.delete_cached_cover(removed["image_cache_key"])
     if isinstance(removed.get("asin"), str):
         lib_col = get_user_library_collection()
         lib_col.update_many(
@@ -1617,7 +1620,18 @@ async def api_purge_and_compact(payload: PurgeAndCompactRequest, user=Depends(ge
     # Get size before
     stats_before = db.command("collStats", "series")
     size_before = stats_before.get("size", 0) + stats_before.get("totalIndexSize", 0)
-    
+
+    # Every cached cover on disk belongs to a book about to lose its document
+    # entry; collect the keys before unsetting so the files don't become
+    # permanent orphans (which would defeat the point of this endpoint).
+    from . import covers
+    cache_keys = [
+        book.get("image_cache_key")
+        for doc in series_col.find({}, {"books.image_cache_key": 1})
+        for book in (doc.get("books") or [])
+        if isinstance(book, dict) and book.get("image_cache_key")
+    ]
+
     # Purge cache data
     result = series_col.update_many(
         {},
@@ -1632,7 +1646,10 @@ async def api_purge_and_compact(payload: PurgeAndCompactRequest, user=Depends(ge
             }
         }
     )
-    
+
+    for key in cache_keys:
+        covers.delete_cached_cover(key)
+
     # Compact the collection to reclaim disk space
     db.command("compact", "series")
     

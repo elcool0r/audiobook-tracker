@@ -73,6 +73,8 @@ services:
       # Required on first start; the app refuses to create an admin without them.
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: replace-me-with-a-strong-password
+    volumes:
+      - ./covers-data:/app/data/covers
     ports:
       - "8000:8000"
 ```
@@ -111,6 +113,7 @@ Access the application:
    export SECRET_KEY=$(openssl rand -hex 32)
    export ADMIN_USERNAME=admin
    export ADMIN_PASSWORD=<a strong password>
+   export COVERS_DIR=./data/covers  # optional; this is the default
    ```
 
 4. Run the application:
@@ -183,6 +186,10 @@ audiobook_notifier_thread_up 1
 ### Environment Variables
 
 - `MONGO_URI`: MongoDB connection string (default: mongodb://mongo:27017)
+- `COVERS_DIR`: Where downloaded book covers are cached on disk (default:
+  `<repo>/data/covers`, or `/app/data/covers` in the Docker image). Mount this
+  as a volume so covers survive a container recreate instead of being
+  re-downloaded from Audible.
 - `MONGO_DB`: Database name (default: audiobook_tracker)
 - `ADMIN_USERNAME`: Admin username. Required on first start, when the initial
   admin account is created. Ignored afterwards.

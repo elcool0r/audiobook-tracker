@@ -27,11 +27,14 @@ services:
     environment:
       MONGO_URI: mongodb://root:changeme123@mongo:27017
       MONGO_DB: audiobook_tracker
+      COVERS_DIR: /app/data/covers
       # Change all three before exposing this to a network.
       # SECRET_KEY signs session tokens: openssl rand -hex 32
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY, e.g. via a .env file}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD for the initial admin account}
+    volumes:
+      - ./covers-data:/app/data/covers
     ports:
       - "8000:8000"
     restart: unless-stopped

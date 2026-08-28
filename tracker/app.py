@@ -21,7 +21,8 @@ from .frontpage import render_frontpage_for_slug
 from .auth import get_current_user, verify_password, create_access_token, TOKEN_NAME, ACCESS_TOKEN_EXPIRE_SECONDS
 from .db import get_users_collection, get_series_collection
 from .api import api_router
-from .library import ensure_indexes, rebuild_series_user_counts, migrate_inline_cover_images
+from .library import ensure_indexes, rebuild_series_user_counts, migrate_cover_images_to_local_cache
+from . import covers
 
 
 def convert_for_json(obj):
@@ -103,7 +104,7 @@ async def get_admin_user(request: Request):
 async def _start_worker():
     settings_mod.ensure_default_admin()
     ensure_indexes()
-    migrate_inline_cover_images()
+    migrate_cover_images_to_local_cache()
     rebuild_series_user_counts()
     # Cleanup old logs
     settings = settings_mod.load_settings()
@@ -148,6 +149,9 @@ def create_app() -> FastAPI:
 
     app.mount(_p("/static"), StaticFiles(directory=str(BASE_DIR / "static")), name="static")
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="public_static")
+    # Cached book covers. Public and unauthenticated: they appear on public
+    # frontpages, and filenames are content hashes, not user input.
+    app.mount(covers.URL_PREFIX, StaticFiles(directory=str(covers.covers_dir())), name="covers")
 
     # Use the module-level `render_frontpage_for_slug` from `tracker.frontpage` (imported at top).
 

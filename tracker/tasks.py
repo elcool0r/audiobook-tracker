@@ -315,9 +315,16 @@ class TaskWorker:
             return
         series_col = get_series_collection()
         lib_col = get_user_library_collection()
+        # Capture cover cache keys before the document is gone, so the cached
+        # files can be removed rather than left orphaned on disk.
+        doc = series_col.find_one({"_id": asin}, {"books.image_cache_key": 1})
         result_series = series_col.delete_one({"_id": asin})
         result_lib = lib_col.delete_many({"series_asin": asin})
-        # clean next_refresh if any
+        if doc:
+            from . import covers
+            for book in doc.get("books") or []:
+                if isinstance(book, dict) and book.get("image_cache_key"):
+                    covers.delete_cached_cover(book["image_cache_key"])
         if job_id:
             self._finish_job(job_id, {
                 "series_deleted": result_series.deleted_count,
