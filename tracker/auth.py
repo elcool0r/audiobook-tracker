@@ -34,6 +34,12 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_SECONDS = 60 * 60 * 24
 TOKEN_NAME = "auth_token"
 
+# Separate, long-lived marker cookie: "this browser has successfully logged into
+# /config before". Unlike TOKEN_NAME it is never deleted on logout and outlives
+# session expiry, so it can gate showing a config link on public pages.
+CONFIG_SEEN_COOKIE = "config_seen_token"
+CONFIG_SEEN_EXPIRE_SECONDS = 60 * 60 * 24 * 365 * 5
+
 
 def _ensure_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
@@ -138,6 +144,22 @@ def create_access_token(data: Dict[str, str], expires_delta: Optional[int] = Non
         )
         token = jwt.encode(to_encode, key, algorithm=ALGORITHM)
     return token
+
+
+def get_config_seen_username(request: Request) -> Optional[str]:
+    """Return the username if this browser has ever logged into /config, else None."""
+    token = request.cookies.get(CONFIG_SEEN_COOKIE)
+    if not token:
+        return None
+    try:
+        settings = load_settings()
+        key = settings.secret_key
+        if not key:
+            return None
+        payload = jwt.decode(token, key, algorithms=[ALGORITHM])
+        return payload.get("sub")
+    except JWTError:
+        return None
 
 
 async def get_current_user(request: Request):

@@ -69,6 +69,11 @@
       </div>
     </nav>
     {% endif %}
+    {% if show_config_link %}
+    <a href="{{ config_link_url }}" class="btn btn-sm btn-outline-secondary opacity-50"
+       style="position:fixed; top:8px; right:8px; z-index:1050;"
+       title="Config">⚙️</a>
+    {% endif %}
     <main class="{{ main_class or 'container' }} py-4">
       {% block content %}{% endblock %}
     </main>

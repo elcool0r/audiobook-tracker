@@ -86,6 +86,13 @@
             <div class="form-text">Adds an archive icon when a series has no future release and its latest release is older than this cutoff.</div>
           </div>
         </div>
+        <div class="mb-2">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="showConfigLink" checked>
+            <label class="form-check-label" for="showConfigLink">Show config link on public page</label>
+          </div>
+          <div class="form-text">Shows a small floating link back to /config on your public page, once you've logged in here.</div>
+        </div>
         <button class="btn btn-sm btn-primary" id="savePrefs">Save Preferences</button>
         <div class="alert alert-success mt-2" id="prefOk" style="display:none;">Preferences saved</div>
         <div class="alert alert-danger mt-2" id="prefErr" style="display:none;"></div>
@@ -139,6 +146,7 @@ async function loadProfile() {
   const inactiveIndicatorEl = document.getElementById('inactiveSeriesIndicatorEnabled'); if (inactiveIndicatorEl) inactiveIndicatorEl.checked = p.inactive_series_indicator_enabled === true;
   const inactiveCutoffValueEl = document.getElementById('profileInactiveSeriesCutoffValue'); if (inactiveCutoffValueEl) inactiveCutoffValueEl.value = p.inactive_series_cutoff_value || 2;
   const inactiveCutoffUnitEl = document.getElementById('profileInactiveSeriesCutoffUnit'); if (inactiveCutoffUnitEl) inactiveCutoffUnitEl.value = p.inactive_series_cutoff_unit || 'years';
+  const showConfigLinkEl = document.getElementById('showConfigLink'); if (showConfigLinkEl) showConfigLinkEl.checked = p.show_config_link !== false;
   updateInactiveSeriesIndicatorFields();
   // frontpage link removed from profile (navbar provides it); only set input if present
   const fp = p.frontpage_slug || p.username;
@@ -266,6 +274,7 @@ document.getElementById('savePrefs').addEventListener('click', async () => {
     inactive_series_indicator_enabled: document.getElementById('inactiveSeriesIndicatorEnabled').checked,
     inactive_series_cutoff_value: Number(document.getElementById('profileInactiveSeriesCutoffValue').value) || 2,
     inactive_series_cutoff_unit: document.getElementById('profileInactiveSeriesCutoffUnit').value || 'years',
+    show_config_link: document.getElementById('showConfigLink').checked,
   };
 
   const r1 = await fetch(apiPath('/api/profile/preferences'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(prefsBody) });

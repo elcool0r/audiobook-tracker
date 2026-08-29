@@ -184,7 +184,10 @@ def create_app() -> FastAPI:
         #     csrf_protect.validate_csrf(request)
         # except CsrfProtectError:
         #     return templates.TemplateResponse("login.html", {"request": request, "error": "CSRF token invalid"})
-        from .auth import log_auth_event, is_account_locked, record_failed_attempt, record_successful_login, client_ip
+        from .auth import (
+            log_auth_event, is_account_locked, record_failed_attempt, record_successful_login, client_ip,
+            CONFIG_SEEN_COOKIE, CONFIG_SEEN_EXPIRE_SECONDS,
+        )
         users = get_users_collection()
         user_doc = users.find_one({"username": username})
         if not user_doc:
@@ -220,6 +223,16 @@ def create_app() -> FastAPI:
             secure=_use_secure_cookies(request),
             samesite="lax",
             max_age=ACCESS_TOKEN_EXPIRE_SECONDS,
+            path="/",
+        )
+        config_seen_token = create_access_token({"sub": username}, expires_delta=CONFIG_SEEN_EXPIRE_SECONDS)
+        resp.set_cookie(
+            CONFIG_SEEN_COOKIE,
+            config_seen_token,
+            httponly=True,
+            secure=_use_secure_cookies(request),
+            samesite="lax",
+            max_age=CONFIG_SEEN_EXPIRE_SECONDS,
             path="/",
         )
         return resp

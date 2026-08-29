@@ -1207,6 +1207,7 @@ class ProfileUpdateRequest(BaseModel):
     inactive_series_indicator_enabled: bool = False
     inactive_series_cutoff_value: int = Field(default=2, ge=1, le=1000)
     inactive_series_cutoff_unit: Literal["days", "weeks", "months", "years"] = "years"
+    show_config_link: bool = True
 
 
 class ApiKeyCreateRequest(BaseModel):
@@ -1758,6 +1759,7 @@ async def api_profile(user=Depends(get_current_user)):
         "inactive_series_indicator_enabled": user.get("inactive_series_indicator_enabled", False),
         "inactive_series_cutoff_value": inactive_cutoff_value,
         "inactive_series_cutoff_unit": inactive_cutoff_unit,
+        "show_config_link": user.get("show_config_link", True),
     }
 
 
@@ -1795,6 +1797,7 @@ async def api_update_profile_settings(payload: ProfileUpdateRequest, user=Depend
         "inactive_series_indicator_enabled": payload.inactive_series_indicator_enabled,
         "inactive_series_cutoff_value": payload.inactive_series_cutoff_value,
         "inactive_series_cutoff_unit": payload.inactive_series_cutoff_unit,
+        "show_config_link": payload.show_config_link,
     }
     col.update_one({"_id": user["_id"]}, {"$set": preferences})
     return {"status": "ok", **preferences}
