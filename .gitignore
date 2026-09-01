@@ -113,6 +113,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 mongo-data
+data/covers
 cookies.txt
 SECURITY_AUDIT_REPORT.md
 code_review_full.md

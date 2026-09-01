@@ -1,14 +1,28 @@
-# Tracker Admin (FastAPI)
+# tracker package
 
-Run the development server:
+FastAPI application package. See [../README.md](../README.md) for installation and
+configuration, and [../DEVELOPMENT.md](../DEVELOPMENT.md) for development setup.
 
-```bash
-pip install -r requirements.txt
-uvicorn tracker.app:app --reload
-```
+## Layout
 
-- Login at http://127.0.0.1:8000/login using the default username `admin` and password `admin`.
-- Update settings in the UI; settings are stored in `tracker_settings.json` in the repo root (you can change the admin password by editing the `admin_user.password_hash` value or by creating a new hashed password using the `tracker.auth.get_password_hash()` helper).
-- The API exposes `/api/search` and `/api/product/{asin}` which use the project's `lib.audible_api_search` functions.
-- Library page (`/library`) lets you search for series (similar to `--series` CLI) and add them to a per-user library stored in `library.json`.
-- When adding a series, the tracker automatically fetches its books (like `--series-books <ASIN>`) and stores them; view them at `/series-books`.
+- `app.py` — application factory, page routes, login/logout, metrics
+- `api.py` — JSON API, mounted at `/config/api`
+- `auth.py` — password hashing, session JWTs, account lockout, auth logging
+- `db.py` — MongoDB accessors
+- `settings.py` — global settings model, persisted in the `settings` collection
+- `library.py` — series/book documents and the Audible fetch pipeline
+- `tasks.py` — background job worker, refresh scheduler, notification sweepers
+- `frontpage.py` — public frontpage rendering
+- `inactive_series.py` — release-activity classification and interval arithmetic
+- `audiobookshelf.py` — Audiobookshelf client used for series suggestions
+
+## Notes
+
+- Settings live in MongoDB, not on disk. `SECRET_KEY`, `ADMIN_USERNAME` and
+  `ADMIN_PASSWORD` come from the environment.
+- The UI and API are served under `/config`; public pages are at `/` and
+  `/home/{slug}`.
+- `tasks.py` runs three daemon threads inside the web process, so the app must be
+  run with a single worker. Running multiple uvicorn workers would give each one
+  its own scheduler and notifier, producing duplicate notifications and duplicate
+  Audible traffic.

@@ -96,7 +96,6 @@ class SettingsSaveRequest(BaseModel):
     inactive_series_refresh_value: int | None = Field(default=None, ge=1, le=1000)
     inactive_series_refresh_unit: Literal["days", "weeks", "months", "years"] | None = None
     response_groups: str | None = None
-    secret_key: str | None = None
     user_agent: str | None = None
     allow_non_admin_series_search: bool | None = None
     skip_known_series_search: bool | None = None
@@ -151,7 +150,7 @@ class DeveloperSeriesDuplicateRequest(BaseModel):
 
 
 @api_router.post("/search")
-async def api_search(req: SearchRequest):
+async def api_search(req: SearchRequest, user=Depends(get_current_user)):
     settings = load_settings()
     if req.num_results is None:
         num_results = settings.default_num_results
@@ -172,7 +171,7 @@ async def api_search(req: SearchRequest):
 
 
 @api_router.get("/product/{asin}")
-async def api_product(asin: str):
+async def api_product(asin: str, user=Depends(get_current_user)):
     settings = load_settings()
     set_rate(settings.rate_rps)
     logger.info(f"Product request: asin='{asin}'")
@@ -186,12 +185,23 @@ async def api_product(asin: str):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+# Settings fields that must never leave the server. `secret_key` signs session JWTs,
+# so leaking it to any authenticated caller is a straight path to admin impersonation.
+SECRET_SETTINGS_FIELDS = {"secret_key", "proxy_password", "audiobookshelf_api_token"}
+
+
+def _public_settings(settings: Settings) -> Dict[str, Any]:
+    """Serialize settings for the admin UI with every secret replaced by a `*_configured` flag."""
+    result = settings.model_dump(exclude=SECRET_SETTINGS_FIELDS)
+    result["audiobookshelf_api_token_configured"] = bool(settings.audiobookshelf_api_token)
+    result["proxy_password_configured"] = bool(settings.proxy_password)
+    return result
+
+
 @api_router.get("/settings")
 async def api_get_settings(user=Depends(get_current_user)):
-    settings = load_settings()
-    result = settings.model_dump(exclude={"audiobookshelf_api_token"})
-    result["audiobookshelf_api_token_configured"] = bool(settings.audiobookshelf_api_token)
-    return result
+    _require_admin(user)
+    return _public_settings(load_settings())
 
 @api_router.post("/settings")
 async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_current_user)):
@@ -204,14 +214,20 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
         # Respect explicit nulls so proxy fields can be cleared when desired.
         return getattr(payload, field) if field in provided_fields else current_value
 
-    slug_candidate = (payload.default_frontpage_slug or "").strip()
-    slug = None
-    if slug_candidate:
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", slug_candidate):
-            raise HTTPException(status_code=400, detail="Slug may contain letters, numbers, hyphen, underscore")
-        if not get_users_collection().find_one({"$or": [{"frontpage_slug": slug_candidate}, {"username": slug_candidate}]}):
-            raise HTTPException(status_code=400, detail="User not found for provided slug")
-        slug = slug_candidate
+    # Every other field preserves the stored value when the client omits it. Doing
+    # otherwise here meant a partial update (e.g. {"debug_logging": true}) silently
+    # cleared the default frontpage, taking the site's public root offline.
+    if "default_frontpage_slug" not in provided_fields:
+        slug = current.default_frontpage_slug
+    else:
+        slug_candidate = (payload.default_frontpage_slug or "").strip()
+        slug = None
+        if slug_candidate:
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", slug_candidate):
+                raise HTTPException(status_code=400, detail="Slug may contain letters, numbers, hyphen, underscore")
+            if not get_users_collection().find_one({"$or": [{"frontpage_slug": slug_candidate}, {"username": slug_candidate}]}):
+                raise HTTPException(status_code=400, detail="User not found for provided slug")
+            slug = slug_candidate
     selected_library_ids = current.audiobookshelf_library_ids
     if payload.audiobookshelf_library_ids is not None:
         selected_library_ids = list(dict.fromkeys(str(value) for value in payload.audiobookshelf_library_ids))
@@ -226,7 +242,7 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
     updated = Settings(
         rate_rps=payload.rate_rps if payload.rate_rps is not None else current.rate_rps,
         response_groups=payload.response_groups if payload.response_groups is not None else current.response_groups,
-        secret_key=payload.secret_key if payload.secret_key is not None else current.secret_key,
+        secret_key=current.secret_key,
         proxy_enabled=_pick("proxy_enabled", current.proxy_enabled),
         proxy_url=_pick("proxy_url", current.proxy_url),
         proxy_username=_pick("proxy_username", current.proxy_username),
@@ -268,9 +284,7 @@ async def api_save_settings(payload: SettingsSaveRequest, user=Depends(get_curre
             worker.ensure_scheduler_running(rebalance=True)
     except Exception:
         pass
-    result = updated.model_dump(exclude={"audiobookshelf_api_token"})
-    result["audiobookshelf_api_token_configured"] = bool(updated.audiobookshelf_api_token)
-    return result
+    return _public_settings(updated)
 
 
 @api_router.post("/settings/audiobookshelf/test")
@@ -338,13 +352,31 @@ async def api_test_proxy(user=Depends(get_current_user)):
     if not settings.proxy_url:
         return {"success": False, "error": "Proxy URL is not configured"}
     proxies = _build_proxies(settings)
-    import requests
+    if not proxies:
+        return {"success": False, "error": "Proxy is not configured"}
     try:
         from lib.audible_api_search import _SESSION
-        response = _SESSION.get("https://www.audible.com", proxies=proxies, timeout=10)
-        if response.status_code == 200:
-            return {"success": True, "message": f"Proxy connection successful (status: {response.status_code})"}
-        return {"success": False, "error": f"Unexpected status code: {response.status_code}"}
+        # Compare the egress address with and without the proxy. A plain 200 only
+        # proves the internet is reachable, which is what made a misconfigured
+        # proxy report success for so long.
+        proxied = await run_in_threadpool(
+            lambda: _SESSION.get("https://api.ipify.org", proxies=proxies, timeout=10)
+        )
+        if proxied.status_code != 200:
+            return {"success": False, "error": f"Unexpected status code: {proxied.status_code}"}
+        proxied_ip = proxied.text.strip()
+        try:
+            direct_ip = (await run_in_threadpool(
+                lambda: _SESSION.get("https://api.ipify.org", timeout=10)
+            )).text.strip()
+        except Exception:
+            direct_ip = None
+        if direct_ip and proxied_ip == direct_ip:
+            return {
+                "success": False,
+                "error": f"Traffic is not being routed through the proxy (egress address is {proxied_ip} either way)",
+            }
+        return {"success": True, "message": f"Proxy connection successful (egress address {proxied_ip})"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -634,48 +666,26 @@ async def api_public_frontpage(slug: str):
     }
 
 
+# The /public/* routes are unauthenticated. They serve only what is already
+# cached: an anonymous caller must not be able to drive outbound Audible requests
+# or create series documents. Populating a series is an authenticated action
+# (see /series/books/{asin} and the refresh jobs).
 @api_router.get("/public/series/{asin}")
 async def api_public_series_info(asin: str):
     from .library import get_series_document
     series = get_series_document(asin)
-    if series and series.get("books"):
-        return series
-    # Fallback: fetch books and cache
-    settings = load_settings()
-    response_groups = settings.response_groups or DEFAULT_RESPONSE_GROUPS
-    books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
-    if books:
-        target_asin = parent_asin or asin
-        set_series_books(target_asin, books)
-        if isinstance(parent_obj, dict):
-            set_series_raw(target_asin, parent_obj)
-            if parent_asin and parent_asin != asin:
-                set_series_raw(parent_asin, parent_obj)
-        updated = get_series_document(target_asin)
-        if updated:
-            return updated
-    if series:
-        return series
-    raise HTTPException(status_code=404, detail="Series not found")
+    if not series:
+        raise HTTPException(status_code=404, detail="Series not found")
+    return series
 
 
 @api_router.get("/public/series/{asin}/books")
 async def api_public_series_books(asin: str):
     from .library import get_series_document
     series = get_series_document(asin)
-    if series and series.get("books"):
-        return series.get("books")
-    settings = load_settings()
-    response_groups = settings.response_groups or DEFAULT_RESPONSE_GROUPS
-    books, parent_obj, parent_asin = _fetch_series_books_internal(asin, response_groups, None)
-    if books:
-        target_asin = parent_asin or asin
-        set_series_books(target_asin, books)
-        if isinstance(parent_obj, dict):
-            set_series_raw(target_asin, parent_obj)
-            if parent_asin and parent_asin != asin:
-                set_series_raw(parent_asin, parent_obj)
-    return books
+    if not series:
+        raise HTTPException(status_code=404, detail="Series not found")
+    return series.get("books") or []
 
 
 @api_router.get("/series/books/{asin}")
@@ -705,10 +715,10 @@ async def api_series_info(asin: str, user=Depends(get_current_user)):
 
 @api_router.post("/series/{asin}/refresh")
 async def api_series_refresh(asin: str, user=Depends(get_current_user)):
-    """Manually enqueue a refresh probe for a series (admin only)."""
+    """Enqueue a refresh probe: cheap, and only refetches books if the series changed."""
     _require_admin(user)
     job_id = enqueue_refresh_probe(asin, response_groups=None, source="manual")
-    return {"job_id": job_id}
+    return {"asin": asin, "job_id": job_id}
 
 
 @api_router.put("/series/{asin}/title")
@@ -1103,6 +1113,9 @@ async def api_developer_delete_series_book(
         raise HTTPException(status_code=404, detail="Book not found")
     cover_image = _select_cover_image(new_books)
     series_col.update_one({"_id": asin}, {"$set": {"books": new_books, "cover_image": cover_image}})
+    if isinstance(removed.get("image_cache_key"), str):
+        from . import covers
+        covers.delete_cached_cover(removed["image_cache_key"])
     if isinstance(removed.get("asin"), str):
         lib_col = get_user_library_collection()
         lib_col.update_many(
@@ -1194,6 +1207,7 @@ class ProfileUpdateRequest(BaseModel):
     inactive_series_indicator_enabled: bool = False
     inactive_series_cutoff_value: int = Field(default=2, ge=1, le=1000)
     inactive_series_cutoff_unit: Literal["days", "weeks", "months", "years"] = "years"
+    show_config_link: bool = True
 
 
 class ApiKeyCreateRequest(BaseModel):
@@ -1308,20 +1322,46 @@ async def api_update_user(username: str, payload: UserUpdateRequest, user=Depend
         update["date_format"] = payload.date_format
     if not update:
         raise HTTPException(status_code=400, detail="No changes")
-    res = col.update_one({"username": username}, {"$set": update})
-    return {"status": "ok"}
+    col.update_one({"username": username}, {"$set": update})
+
+    # user_library, api_keys and the notification sweepers all key on `username`.
+    # Renaming only the users document orphaned the account's whole library, left
+    # series.user_count inflated, and silently invalidated the user's live session.
+    new_username = update.get("username")
+    if new_username and new_username != username:
+        get_user_library_collection().update_many(
+            {"username": username}, {"$set": {"username": new_username}}
+        )
+        from .db import get_api_keys_collection
+        get_api_keys_collection().update_many(
+            {"username": username}, {"$set": {"username": new_username}}
+        )
+    return {"status": "ok", "username": new_username or username}
 
 
 @api_router.delete("/users/{username}")
 async def api_delete_user(username: str, user=Depends(get_current_user)):
     _require_admin(user)
-    if username == "admin":
-        raise HTTPException(status_code=400, detail="Cannot delete default admin")
     col = get_users_collection()
-    res = col.delete_one({"username": username})
-    if res.deleted_count == 0:
+    target = col.find_one({"username": username})
+    if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    return {"status": "ok"}
+    # Guard the last admin by role. The previous check hard-coded the name "admin",
+    # so a deployment using ADMIN_USERNAME could delete its only real admin while
+    # protecting an account that did not exist.
+    if target.get("role") == "admin" and col.count_documents({"role": "admin"}) <= 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the last admin")
+
+    col.delete_one({"username": username})
+    # Remove the account's library rather than orphaning it, then correct the
+    # per-series subscriber counts the deleted rows were contributing to.
+    removed = get_user_library_collection().delete_many({"username": username})
+    from .db import get_api_keys_collection
+    get_api_keys_collection().delete_many({"username": username})
+    if removed.deleted_count:
+        from .library import rebuild_series_user_counts
+        rebuild_series_user_counts()
+    return {"status": "ok", "library_entries_removed": removed.deleted_count}
 
 
 # --- Series admin (admin) ---
@@ -1488,8 +1528,9 @@ async def api_list_audiobookshelf_series(user=Depends(get_current_user)):
     return result
 
 
-@api_router.post("/series/{asin}/refresh")
-async def api_refresh_series(asin: str, payload: SeriesRefreshRequest | None = None, user=Depends(get_current_user)):
+@api_router.post("/series/{asin}/refetch")
+async def api_refetch_series(asin: str, payload: SeriesRefreshRequest | None = None, user=Depends(get_current_user)):
+    """Force a full re-fetch of every book, bypassing the probe's change check."""
     _require_admin(user)
     settings = load_settings()
     response_groups = (payload.response_groups if payload else None) or settings.response_groups or DEFAULT_RESPONSE_GROUPS
@@ -1564,77 +1605,13 @@ async def api_database_stats(user=Depends(get_current_user)):
     return {"collections": stats}
 
 
-@api_router.post("/database/dump-restore")
-async def api_database_dump_restore(user=Depends(get_current_user)):
-    _require_admin(user)
-    from .db import get_db
-    
-    db = get_db()
-    
-    # Get size before
-    total_before = 0
-    for col_name in ["series", "user_library", "users", "jobs", "settings", "api_keys"]:
-        try:
-            stats = db.command("collStats", col_name)
-            total_before += stats.get("size", 0) + stats.get("totalIndexSize", 0)
-        except Exception:
-            pass
-    
-    try:
-        # Dump all data from all collections into memory
-        backup = {}
-        for col_name in db.list_collection_names():
-            if col_name.startswith("system."):
-                continue
-            collection = db[col_name]
-            # Get all documents and indexes
-            backup[col_name] = {
-                "documents": list(collection.find({})),
-                "indexes": list(collection.list_indexes())
-            }
-        
-        # Drop all collections (this forces MongoDB to release space)
-        for col_name in db.list_collection_names():
-            if not col_name.startswith("system."):
-                db.drop_collection(col_name)
-        
-        # Restore all data
-        for col_name, data in backup.items():
-            collection = db[col_name]
-            # Insert documents if any exist
-            if data["documents"]:
-                collection.insert_many(data["documents"])
-            # Recreate indexes (skip the default _id index)
-            for index_info in data["indexes"]:
-                if index_info["name"] != "_id_":
-                    keys = list(index_info["key"].items())
-                    options = {k: v for k, v in index_info.items() if k not in ["key", "v", "ns"]}
-                    try:
-                        collection.create_index(keys, **options)
-                    except Exception:
-                        pass  # Index might already exist or be invalid
-        
-        # Get size after
-        total_after = 0
-        for col_name in ["series", "user_library", "users", "jobs", "settings", "api_keys"]:
-            try:
-                stats = db.command("collStats", col_name)
-                total_after += stats.get("size", 0) + stats.get("totalIndexSize", 0)
-            except Exception:
-                pass
-        
-        return {
-            "status": "ok",
-            "size_before": total_before,
-            "size_after": total_after
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Operation failed: {str(e)}")
+class PurgeAndCompactRequest(BaseModel):
+    """Explicit confirmation for a destructive, non-undoable maintenance action."""
+    confirm: Literal["purge-and-compact"]
 
 
 @api_router.post("/series/purge-and-compact")
-async def api_purge_and_compact(user=Depends(get_current_user)):
+async def api_purge_and_compact(payload: PurgeAndCompactRequest, user=Depends(get_current_user)):
     _require_admin(user)
     from .db import get_db
     
@@ -1644,7 +1621,18 @@ async def api_purge_and_compact(user=Depends(get_current_user)):
     # Get size before
     stats_before = db.command("collStats", "series")
     size_before = stats_before.get("size", 0) + stats_before.get("totalIndexSize", 0)
-    
+
+    # Every cached cover on disk belongs to a book about to lose its document
+    # entry; collect the keys before unsetting so the files don't become
+    # permanent orphans (which would defeat the point of this endpoint).
+    from . import covers
+    cache_keys = [
+        book.get("image_cache_key")
+        for doc in series_col.find({}, {"books.image_cache_key": 1})
+        for book in (doc.get("books") or [])
+        if isinstance(book, dict) and book.get("image_cache_key")
+    ]
+
     # Purge cache data
     result = series_col.update_many(
         {},
@@ -1659,7 +1647,10 @@ async def api_purge_and_compact(user=Depends(get_current_user)):
             }
         }
     )
-    
+
+    for key in cache_keys:
+        covers.delete_cached_cover(key)
+
     # Compact the collection to reclaim disk space
     db.command("compact", "series")
     
@@ -1768,6 +1759,7 @@ async def api_profile(user=Depends(get_current_user)):
         "inactive_series_indicator_enabled": user.get("inactive_series_indicator_enabled", False),
         "inactive_series_cutoff_value": inactive_cutoff_value,
         "inactive_series_cutoff_unit": inactive_cutoff_unit,
+        "show_config_link": user.get("show_config_link", True),
     }
 
 
@@ -1805,6 +1797,7 @@ async def api_update_profile_settings(payload: ProfileUpdateRequest, user=Depend
         "inactive_series_indicator_enabled": payload.inactive_series_indicator_enabled,
         "inactive_series_cutoff_value": payload.inactive_series_cutoff_value,
         "inactive_series_cutoff_unit": payload.inactive_series_cutoff_unit,
+        "show_config_link": payload.show_config_link,
     }
     col.update_one({"_id": user["_id"]}, {"$set": preferences})
     return {"status": "ok", **preferences}

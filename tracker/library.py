@@ -5,17 +5,18 @@ import asyncio
 from datetime import datetime, timezone
 from .app_helpers import parse_date_naive
 from typing import Any, Dict, List, Optional
-import base64
 import re
 import requests
 import unicodedata
 
+from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from lib.audible_api_search import DEFAULT_RESPONSE_GROUPS, get_product_by_asin, run_coro_sync, _SESSION
+from lib.audible_api_search import DEFAULT_RESPONSE_GROUPS, get_product_by_asin, run_coro_sync
 
 from pymongo import ASCENDING, UpdateOne
 
+from . import covers
 from .db import get_series_collection, get_user_library_collection, get_users_collection, get_jobs_collection
 
 
@@ -264,6 +265,40 @@ def _deduplicate_books_by_title(books: List[Dict[str, Any]]) -> List[Dict[str, A
     return deduped
 
 
+def _cache_book_cover(book: Dict[str, Any], existing_book: Dict[str, Any] | None, proxies) -> None:
+    """Download `book`'s cover into the local cache, revalidating against
+    whatever was cached for this book before.
+
+    `book["image"]` arrives holding the remote Audible URL (set by
+    `_book_summary`/`_fetch_series_books_internal`); this rewrites it to the
+    local `/covers/...` path on success. On failure it falls back to the
+    previously cached local path if one exists, then to the remote URL itself,
+    so a transient fetch error never blanks a cover that was showing fine.
+    """
+    origin_url = book.get("image")
+    if not origin_url or str(origin_url).startswith(covers.URL_PREFIX + "/"):
+        return
+    prev_key = (existing_book or {}).get("image_cache_key")
+    prev_etag = (existing_book or {}).get("image_etag")
+    local_path, cache_key, etag = covers.cache_cover(
+        origin_url, previous_key=prev_key, previous_etag=prev_etag, proxies=proxies
+    )
+    book["image_url"] = origin_url
+    if local_path:
+        book["image"] = local_path
+        book["image_cache_key"] = cache_key
+        book["image_etag"] = etag
+        return
+    # Caching failed. Prefer an existing local copy over the raw remote URL.
+    existing_local = (existing_book or {}).get("image")
+    if isinstance(existing_local, str) and existing_local.startswith(covers.URL_PREFIX + "/") and covers.local_path_for_key(prev_key or ""):
+        book["image"] = existing_local
+        book["image_cache_key"] = prev_key
+        book["image_etag"] = prev_etag
+    else:
+        book["image"] = origin_url
+
+
 def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if books is None:
         books = []
@@ -283,12 +318,17 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
     series_doc = series_col.find_one({"_id": asin}, {"ignore_narrator_warnings": 1}) or {}
     series_ignore = bool(series_doc.get("ignore_narrator_warnings", False))
 
+    from .settings import load_settings
+    cover_proxies = _build_proxies(load_settings())
+
     processed_books: List[Dict[str, Any]] = []
     for book in books:
         if not isinstance(book, dict):
             continue
         key = _book_identity(book)
-        existing_hidden = existing_map.get(key, {}).get("hidden") if key else None
+        existing_book = existing_map.get(key) if key else None
+        _cache_book_cover(book, existing_book, cover_proxies)
+        existing_hidden = (existing_book or {}).get("hidden") if key else None
         incoming_hidden = book.get("hidden")
         if isinstance(incoming_hidden, bool):
             book_hidden = incoming_hidden
@@ -296,7 +336,7 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
             book_hidden = bool(existing_hidden)
         book["hidden"] = book_hidden
         # Preserve any existing ignore_narrator_warning flag unless explicitly provided
-        existing_ignore = existing_map.get(key, {}).get("ignore_narrator_warning") if key else None
+        existing_ignore = (existing_book or {}).get("ignore_narrator_warning") if key else None
         incoming_ignore = book.get("ignore_narrator_warning")
         if isinstance(incoming_ignore, bool):
             book_ignore = incoming_ignore
@@ -309,6 +349,16 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
             book["ignore_narrator_warning_set_by_series"] = True
         book["ignore_narrator_warning"] = book_ignore
         processed_books.append(book)
+
+    # Any book that dropped out of the series (removed by Audible, or de-duped
+    # away) leaves its cached cover file orphaned on disk unless cleaned up here.
+    retained_keys = {b.get("image_cache_key") for b in processed_books if b.get("image_cache_key")}
+    for old_book in existing_books:
+        if not isinstance(old_book, dict):
+            continue
+        old_key = old_book.get("image_cache_key")
+        if old_key and old_key not in retained_keys:
+            covers.delete_cached_cover(old_key)
 
     cover_image = None
     for book in processed_books:
@@ -344,22 +394,27 @@ def set_series_books(asin: str, books: List[Dict[str, Any]]) -> List[Dict[str, A
     return processed_books
 
 
+# These three helpers write metadata onto an existing series. They deliberately do
+# not upsert: a series document is created only by `ensure_series_document` or by
+# `set_series_books`, both of which supply a title. Upserting here previously let
+# any probed ASIN — including one from an unauthenticated request — insert a
+# titleless stub that the refresh scheduler would then poll forever.
 def set_series_raw(asin: str, raw: Dict[str, Any] | None) -> None:
-    # Avoid creating/upserting placeholder series entries
+    # Avoid storing placeholder series entries
     if isinstance(raw, dict) and raw.get("issue_date") == "2200-01-01":
         return
     series_col = get_series_collection()
-    series_col.update_one({"_id": asin}, {"$set": {"raw": raw}}, upsert=True)
+    series_col.update_one({"_id": asin}, {"$set": {"raw": raw}})
 
 
 def touch_series_fetched(asin: str) -> None:
     series_col = get_series_collection()
-    series_col.update_one({"_id": asin}, {"$set": {"fetched_at": _now_iso()}}, upsert=True)
+    series_col.update_one({"_id": asin}, {"$set": {"fetched_at": _now_iso()}})
 
 
 def set_series_next_refresh(asin: str, when_iso: str | None) -> None:
     series_col = get_series_collection()
-    series_col.update_one({"_id": asin}, {"$set": {"next_refresh_at": when_iso}}, upsert=True)
+    series_col.update_one({"_id": asin}, {"$set": {"next_refresh_at": when_iso}})
 
 
 def get_user_library(username: str) -> List[LibraryItem]:
@@ -422,7 +477,6 @@ async def add_to_library(username: str, item: LibraryItem, skip_fetch: bool = Fa
                 resp = await get_product_by_asin(item.asin, auth_token=None, proxies=proxies, user_agent=settings.user_agent)
                 product = resp.get("product") if isinstance(resp, dict) and "product" in resp else resp
                 if isinstance(product, dict) and product.get("issue_date") == "2200-01-01":
-                    from fastapi import HTTPException
                     raise HTTPException(status_code=400, detail="Cannot add series with placeholder issue_date")
             except HTTPException:
                 raise
@@ -487,7 +541,77 @@ def ensure_indexes() -> None:
     users_col.create_index([("frontpage_slug", ASCENDING)], unique=True, sparse=True)
 
 
+def migrate_cover_images_to_local_cache() -> int:
+    """Move every book cover to the local disk cache, run once at startup.
+
+    Handles two generations of prior storage: covers embedded as base64 `data:`
+    URIs (recovered via the sibling `image_url` field, then downloaded), and
+    covers stored as bare remote URLs (downloaded directly). Already-migrated
+    books (`image` already a local `/covers/...` path) are left untouched, so
+    this is safe to run on every startup. Returns the number of series updated.
+    """
+    from .settings import load_settings
+    proxies = _build_proxies(load_settings())
+    series_col = get_series_collection()
+    ops: List[UpdateOne] = []
+    projection = {"books": 1, "cover_image": 1}
+    for doc in series_col.find({}, projection):
+        books = doc.get("books")
+        if not isinstance(books, list):
+            continue
+        changed = False
+        for book in books:
+            if not isinstance(book, dict):
+                continue
+            image = book.get("image")
+            if isinstance(image, str) and image.startswith("data:"):
+                # Older documents embedded bytes with no recoverable URL at all.
+                book["image"] = book.get("image_url") or None
+                image = book["image"]
+            if not (isinstance(image, str) and image.startswith(("http://", "https://"))):
+                # Already a local /covers/ path, already None with nothing
+                # recoverable, or some other value untouched by prior generations.
+                continue
+            prev_key = book.get("image_cache_key")
+            prev_etag = book.get("image_etag")
+            local_path, cache_key, etag = covers.cache_cover(
+                image, previous_key=prev_key, previous_etag=prev_etag, proxies=proxies
+            )
+            book["image_url"] = image
+            if local_path:
+                book["image"] = local_path
+                book["image_cache_key"] = cache_key
+                book["image_etag"] = etag
+            changed = True
+        cover = doc.get("cover_image")
+        if isinstance(cover, str) and (cover.startswith("data:") or cover.startswith(("http://", "https://"))):
+            new_cover = next(
+                (b.get("image") for b in books
+                 if isinstance(b, dict) and not b.get("hidden") and b.get("image")),
+                None,
+            )
+            doc_cover_changed = new_cover != cover
+            if doc_cover_changed:
+                changed = True
+                cover = new_cover
+        if changed:
+            ops.append(UpdateOne({"_id": doc.get("_id")},
+                                 {"$set": {"books": books, "cover_image": cover}}))
+    updated = 0
+    for i in range(0, len(ops), 50):
+        chunk = ops[i:i + 50]
+        try:
+            result = series_col.bulk_write(chunk, ordered=False)
+            updated += result.modified_count
+        except Exception:
+            logging.exception("Failed to migrate cover images for a batch")
+    if updated:
+        logging.info("Migrated cover images to the local cache for %d series", updated)
+    return updated
+
+
 def rebuild_series_user_counts() -> None:
+    """Recompute series.user_count from the library entries that actually exist."""
     user_col = get_user_library_collection()
     pipeline = [
         {"$match": {"series_asin": {"$exists": True}}},
@@ -498,7 +622,13 @@ def rebuild_series_user_counts() -> None:
     ops = [UpdateOne({"_id": asin}, {"$set": {"user_count": count}}) for asin, count in counts.items()]
     if ops:
         series_col.bulk_write(ops, ordered=False)
-    series_col.update_many({"user_count": {"$exists": False}}, {"$set": {"user_count": 0}})
+    # Series with no remaining subscribers produce no aggregation row, so they have
+    # to be zeroed explicitly; otherwise a stale count lingers forever once the last
+    # user removes the series or their account is deleted.
+    series_col.update_many(
+        {"_id": {"$nin": list(counts.keys())}},
+        {"$set": {"user_count": 0}},
+    )
 
 
 def _extract_products(response: Any) -> List[Dict[str, Any]]:
@@ -541,9 +671,12 @@ def _build_proxies(settings) -> Optional[Dict[str, str]]:
         proto_split = proxy.split("://", 1)
         if len(proto_split) == 2:
             proxy = f"{proto_split[0]}://{settings.proxy_username}:{settings.proxy_password}@{proto_split[1]}"
+    # `requests` keys proxies by bare scheme ("http"/"https"). The httpx-style
+    # "http://" keys used previously matched nothing, so every request silently
+    # went direct while the UI reported the proxy as working.
     return {
-        "http://": proxy,
-        "https://": proxy,
+        "http": proxy,
+        "https": proxy,
     }
 
 
@@ -675,18 +808,16 @@ def _fetch_series_books_internal(series_asin: str, response_groups: Optional[str
         # Use parent_asin (determined earlier) as the series ASIN for relationship entries
         primary_series_asin = parent_asin or series_asin
         book["series"] = [{"asin": primary_series_asin, "sequence": seq}] if primary_series_asin else []
-        # fetch image data and store
-        book["image_url"] = book["image"]  # Store original URL for notifications
-        try:
-            img_resp = _SESSION.get(book["image"], timeout=10, proxies=proxies)
-            if img_resp.ok:
-                encoded = base64.b64encode(img_resp.content).decode("ascii")
-                ctype = img_resp.headers.get("Content-Type", "image/jpeg")
-                book["image"] = f"data:{ctype};base64,{encoded}"
-            else:
-                book["image"] = None
-        except Exception:
-            book["image"] = None
+        # Store the cover as a URL, not as inline bytes.
+        #
+        # Covers used to be downloaded and embedded as base64 data URIs. A 60-book
+        # series then carried roughly 5-10 MB of image data inside one document,
+        # heading for MongoDB's hard 16 MB limit — past which set_series_books
+        # raises DocumentTooLarge, the generic handler records a job error, and the
+        # series silently stops updating. It also meant every frontpage render
+        # loaded all of it into memory and re-sent it to the browser, since data
+        # URIs cannot be cached separately from the page.
+        book["image_url"] = book["image"]
         books.append(book)
 
     filtered_books: List[Dict[str, Any]] = books

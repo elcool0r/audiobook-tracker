@@ -29,9 +29,12 @@ services:
     environment:
       MONGO_URI: mongodb://root:changeme123@mongo:27017
       MONGO_DB: audiobook_tracker
-      SECRET_KEY: supersecretkey123456789
+      COVERS_DIR: /app/data/covers
+      SECRET_KEY: dev-only-secret-key-not-for-production
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: changeme
+    volumes:
+      - ./covers-data:/app/data/covers
     ports:
       - "8000:8000"
     restart: unless-stopped

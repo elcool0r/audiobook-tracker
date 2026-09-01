@@ -94,6 +94,7 @@ def render_frontpage_for_slug(request: Request, slug: str, templates: Jinja2Temp
         return None
     # Local imports to allow tests to patch these functions on the module
     from .db import get_users_collection
+    from .auth import get_config_seen_username
     from .library import get_user_library, visible_books
     from .app_helpers import (
         parse_date,
@@ -304,6 +305,15 @@ def render_frontpage_for_slug(request: Request, slug: str, templates: Jinja2Temp
 
     settings = settings_mod.load_settings()
 
+    # Show a floating link back to /config only for a browser that has previously
+    # logged in successfully there, and only if that user hasn't hidden it.
+    show_config_link = False
+    seen_username = get_config_seen_username(request)
+    if seen_username:
+        seen_doc = user_doc if seen_username == username else users_col.find_one({"username": seen_username})
+        if seen_doc and seen_doc.get("show_config_link", True):
+            show_config_link = True
+
     return templates.TemplateResponse(
         "frontpage.html",
         {
@@ -321,5 +331,7 @@ def render_frontpage_for_slug(request: Request, slug: str, templates: Jinja2Temp
             "series": series_rows,
             "version": __version__,
             "show_narrator_warnings": user_doc.get("show_narrator_warnings", True),
+            "show_config_link": show_config_link,
+            "config_link_url": "/config/login",
         },
     )

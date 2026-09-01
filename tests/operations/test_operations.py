@@ -31,8 +31,8 @@ with patch('tracker.api._require_admin', mock_require_admin):
 @pytest.fixture
 def client():
     """Create a test client for the FastAPI app."""
-    # Set up test environment variables
-    os.environ['MONGO_URI'] = 'mongodb://localhost:27017'
+    # MONGO_URI is intentionally not set here: this fixture patches the collection
+    # accessors, and exporting it globally leaked into other test modules.
     os.environ['MONGO_DB'] = 'test_audiobook_tracker'
     os.environ['SECRET_KEY'] = 'test_secret_key'
 
@@ -150,7 +150,7 @@ class TestUserManagement:
             "notifications": {"enabled": True, "urls": ["ntfy://test"]}
         }
 
-        with patch('tracker.db.get_users_collection') as mock_users_col:
+        with patch('tracker.api.get_users_collection') as mock_users_col:
             mock_users_col.return_value.find_one.return_value = {
                 "username": "admin",
                 "role": "admin"
@@ -167,14 +167,16 @@ class TestUserManagement:
     
     def test_delete_user(self, client, auth_headers):
         """Test deleting a user."""
-        with patch('tracker.db.get_users_collection') as mock_users_col, \
-             patch('tracker.db.get_user_library_collection') as mock_lib_col:
+        with patch('tracker.api.get_users_collection') as mock_users_col, \
+             patch('tracker.api.get_user_library_collection') as mock_lib_col:
 
             mock_users_col.return_value.find_one.return_value = {
-                "username": "testuser"
+                "username": "testuser",
+                "role": "user",
             }
+            mock_users_col.return_value.count_documents.return_value = 1
             mock_users_col.return_value.delete_one.return_value = MagicMock()
-            mock_lib_col.return_value.delete_many.return_value = MagicMock()
+            mock_lib_col.return_value.delete_many.return_value = MagicMock(deleted_count=0)
 
             response = client.delete(
                 "/config/api/users/testuser",

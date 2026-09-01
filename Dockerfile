@@ -17,4 +17,13 @@ COPY lib ./lib
 COPY tracker ./tracker
 
 EXPOSE 8000
-CMD ["uvicorn", "tracker.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers with --forwarded-allow-ips is required behind a TLS-terminating
+# reverse proxy. Uvicorn defaults forwarded_allow_ips to 127.0.0.1, so on a Docker
+# network it ignored X-Forwarded-Proto (session cookies then lost the Secure flag)
+# and X-Forwarded-For (per-IP login throttling collapsed into one global bucket,
+# and every auth-log entry recorded the proxy's address).
+#
+# "*" trusts the forwarded headers, so port 8000 must only be reachable by the
+# proxy. Override FORWARDED_ALLOW_IPS with the proxy's address to narrow it.
+ENV FORWARDED_ALLOW_IPS="*"
+CMD ["sh", "-c", "exec uvicorn tracker.app:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips \"$FORWARDED_ALLOW_IPS\""]

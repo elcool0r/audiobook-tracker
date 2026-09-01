@@ -21,7 +21,6 @@ on:
 
 jobs:
   test:
-    if: false
     runs-on: ubuntu-latest
     services:
       mongo:
@@ -48,11 +47,11 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
 
-    - name: Run unit tests
+    - name: Run unit and operations tests
       run: |
-        python -m pytest tests/operations/ tracker/test_release_sweep.py -v
+        python -m pytest tests/unit tests/security tests/operations tracker -v
 
     - name: Run integration tests
       run: |
@@ -68,6 +67,7 @@ jobs:
         docker run --rm test-audiobook-tracker --help || true  # Just test if container starts
 
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
 
     steps:

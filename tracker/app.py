@@ -15,23 +15,14 @@ from slowapi.middleware import SlowAPIMiddleware
 # from fastapi_csrf_protect.exceptions import CsrfProtectError
 import datetime
 from bson import ObjectId
-from datetime import datetime as _dt, timezone
-import math
-from typing import Optional, Dict, Any
+from datetime import datetime as _dt
 from .db import get_series_collection
-from .frontpage import render_frontpage_for_slug, _get_publication_dt
-
-
-def _format_time_left(release_dt: _dt, now: _dt) -> tuple[str, int | None, int | None]:
-    # Delegate to shared helper to avoid duplicate logic and keep a shim for tests
-    from .app_helpers import format_time_left as _fmt
-    return _fmt(release_dt, now)
-
-
-from .auth import get_current_user, verify_password, create_access_token, TOKEN_NAME
+from .frontpage import render_frontpage_for_slug
+from .auth import get_current_user, verify_password, create_access_token, TOKEN_NAME, ACCESS_TOKEN_EXPIRE_SECONDS
 from .db import get_users_collection, get_series_collection
 from .api import api_router
-from .library import ensure_indexes, rebuild_series_user_counts, visible_books
+from .library import ensure_indexes, rebuild_series_user_counts, migrate_cover_images_to_local_cache
+from . import covers
 
 
 def convert_for_json(obj):
@@ -48,14 +39,6 @@ def convert_for_json(obj):
 from . import settings as settings_mod
 from .__version__ import __version__
 from .tasks import worker
-from .app_helpers import (
-    parse_date,
-    format_dt,
-    format_d,
-    format_runtime,
-    preload_series_data,
-    compute_num_latest,
-)
 from prometheus_client import Gauge, Counter, generate_latest, REGISTRY
 
 
@@ -88,10 +71,29 @@ series_count = _get_or_create_metric('audiobook_series_total', Gauge, 'Total num
 user_count = _get_or_create_metric('audiobook_users_total', Gauge, 'Total number of users')
 login_attempts = _get_or_create_metric('audiobook_login_attempts_total', Counter, 'Total login attempts', ['status'])
 failed_logins = _get_or_create_metric('audiobook_failed_logins_total', Counter, 'Total failed logins')
+# The background threads die silently: nothing restarts them and nothing reports
+# their absence, so the first symptom is "notifications stopped weeks ago" on an
+# otherwise healthy-looking app. Expose their liveness so it can be alerted on.
+worker_thread_up = _get_or_create_metric('audiobook_worker_thread_up', Gauge, 'Job worker thread alive')
+scheduler_thread_up = _get_or_create_metric('audiobook_scheduler_thread_up', Gauge, 'Refresh scheduler thread alive')
+notifier_thread_up = _get_or_create_metric('audiobook_notifier_thread_up', Gauge, 'Release notifier thread alive')
 
 def _p(path: str) -> str:
     """Prefix a route path with the configured base."""
     return f"{BASE_PATH}{path}"
+
+def _use_secure_cookies(request: Request) -> bool:
+    """Whether to mark the session cookie Secure.
+
+    Relies on --proxy-headers being enabled so request.url.scheme reflects
+    X-Forwarded-Proto. FORCE_SECURE_COOKIES=1 covers setups that terminate TLS
+    somewhere the forwarded headers do not survive.
+    """
+    import os
+    if os.getenv("FORCE_SECURE_COOKIES", "").strip().lower() in {"1", "true", "yes"}:
+        return True
+    return request.url.scheme == "https"
+
 
 async def get_admin_user(request: Request):
     user = await get_current_user(request)
@@ -102,6 +104,7 @@ async def get_admin_user(request: Request):
 async def _start_worker():
     settings_mod.ensure_default_admin()
     ensure_indexes()
+    migrate_cover_images_to_local_cache()
     rebuild_series_user_counts()
     # Cleanup old logs
     settings = settings_mod.load_settings()
@@ -128,11 +131,15 @@ def create_app() -> FastAPI:
         # Shutdown
         await _stop_worker()
 
+    # The schema and docs routes are registered manually below so they can be
+    # gated on admin + developer mode. FastAPI's built-ins take no dependencies,
+    # so /config/docs and /config/openapi.json were readable by anyone, despite
+    # the README stating they require developer mode.
     app = FastAPI(
-        docs_url=_p("/docs"),
-        redoc_url=_p("/redoc"),
-        openapi_url=_p("/openapi.json"),
-        lifespan=lifespan
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
     )
     app.state.limiter = limiter
     app.add_middleware(SlowAPIMiddleware)
@@ -142,6 +149,9 @@ def create_app() -> FastAPI:
 
     app.mount(_p("/static"), StaticFiles(directory=str(BASE_DIR / "static")), name="static")
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="public_static")
+    # Cached book covers. Public and unauthenticated: they appear on public
+    # frontpages, and filenames are content hashes, not user input.
+    app.mount(covers.URL_PREFIX, StaticFiles(directory=str(covers.covers_dir())), name="covers")
 
     # Use the module-level `render_frontpage_for_slug` from `tracker.frontpage` (imported at top).
 
@@ -174,27 +184,27 @@ def create_app() -> FastAPI:
         #     csrf_protect.validate_csrf(request)
         # except CsrfProtectError:
         #     return templates.TemplateResponse("login.html", {"request": request, "error": "CSRF token invalid"})
-        from .auth import log_auth_event, is_account_locked, record_failed_attempt, record_successful_login
+        from .auth import (
+            log_auth_event, is_account_locked, record_failed_attempt, record_successful_login, client_ip,
+            CONFIG_SEEN_COOKIE, CONFIG_SEEN_EXPIRE_SECONDS,
+        )
         users = get_users_collection()
         user_doc = users.find_one({"username": username})
         if not user_doc:
-            settings_mod.ensure_default_admin()
-            user_doc = users.find_one({"username": username})
-        if not user_doc:
-            log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "User not found")
+            log_auth_event("login_failed", username, client_ip(request), request.headers.get("user-agent", ""), "User not found")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
             settings = settings_mod.load_settings()
             return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Invalid credentials", "version": __version__})
         if is_account_locked(user_doc):
-            log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "Account locked")
+            log_auth_event("login_failed", username, client_ip(request), request.headers.get("user-agent", ""), "Account locked")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
             settings = settings_mod.load_settings()
             return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Account locked due to too many failed attempts", "version": __version__})
         if not verify_password(password, user_doc.get("password_hash", "")):
             record_failed_attempt(username)
-            log_auth_event("login_failed", username, request.client.host, request.headers.get("user-agent", ""), "Invalid password")
+            log_auth_event("login_failed", username, client_ip(request), request.headers.get("user-agent", ""), "Invalid password")
             logger.warning(f"Failed login attempt for username: {username}")
             login_attempts.labels(status="failed").inc()
             failed_logins.inc()
@@ -202,17 +212,34 @@ def create_app() -> FastAPI:
             return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "Invalid credentials", "version": __version__})
         record_successful_login(username)
         token = create_access_token({"sub": username})
-        log_auth_event("login_success", username, request.client.host, request.headers.get("user-agent", ""))
+        log_auth_event("login_success", username, client_ip(request), request.headers.get("user-agent", ""))
         logger.info(f"Successful login for username: {username}")
         login_attempts.labels(status="success").inc()
         resp = RedirectResponse(url=_p("/library"), status_code=302)
-        secure = request.url.scheme == "https"
-        resp.set_cookie(TOKEN_NAME, token, httponly=True, secure=secure)
+        resp.set_cookie(
+            TOKEN_NAME,
+            token,
+            httponly=True,
+            secure=_use_secure_cookies(request),
+            samesite="lax",
+            max_age=ACCESS_TOKEN_EXPIRE_SECONDS,
+            path="/",
+        )
+        config_seen_token = create_access_token({"sub": username}, expires_delta=CONFIG_SEEN_EXPIRE_SECONDS)
+        resp.set_cookie(
+            CONFIG_SEEN_COOKIE,
+            config_seen_token,
+            httponly=True,
+            secure=_use_secure_cookies(request),
+            samesite="lax",
+            max_age=CONFIG_SEEN_EXPIRE_SECONDS,
+            path="/",
+        )
         return resp
 
     @app.get(_p("/logout"))
     async def logout(request: Request):
-        from .auth import log_auth_event, SECRET_KEY, ALGORITHM
+        from .auth import log_auth_event, SECRET_KEY, ALGORITHM, client_ip
         username = "unknown"
         token = request.cookies.get(TOKEN_NAME)
         if token:
@@ -223,12 +250,12 @@ def create_app() -> FastAPI:
             except Exception as e:
                 logger.warning(
                     "Failed to decode JWT during logout from %s: %s",
-                    request.client.host if request.client else "unknown",
+                    client_ip(request),
                     str(e),
                 )
-        log_auth_event("logout", username, request.client.host, request.headers.get("user-agent", ""))
+        log_auth_event("logout", username, client_ip(request), request.headers.get("user-agent", ""))
         resp = RedirectResponse(url=_p("/login"), status_code=302)
-        resp.delete_cookie(TOKEN_NAME)
+        resp.delete_cookie(TOKEN_NAME, path="/")
         return resp
 
     @app.exception_handler(HTTPException)
@@ -241,7 +268,7 @@ def create_app() -> FastAPI:
     # Dashboard view removed; library is the default landing page
 
     @app.get(_p("/settings"), response_class=HTMLResponse)
-    async def settings_get(request: Request, user=Depends(get_current_user)):
+    async def settings_get(request: Request, user=Depends(get_admin_user)):
         settings = settings_mod.load_settings()
         return templates.TemplateResponse("settings.html", {"request": request, "settings": settings, "user": user, "version": __version__})
 
@@ -257,279 +284,16 @@ def create_app() -> FastAPI:
 
     @app.get("/home/{slug}", response_class=HTMLResponse)
     async def user_home_page(request: Request, slug: str):
-        # Fully server-rendered frontpage: Upcoming, Latest, and Series (no series view links)
+        # Fully server-rendered frontpage: Upcoming, Latest, and Series.
         page = render_frontpage_for_slug(request, slug, templates)
         if page:
             return page
-        from .db import get_users_collection
-        from .library import get_user_library
-        users_col = get_users_collection()
-        user_doc = users_col.find_one({"$or": [{"frontpage_slug": slug}, {"username": slug}]})
-        if not user_doc:
-            settings = settings_mod.load_settings()
-            return templates.TemplateResponse("login.html", {"request": request, "settings": settings, "error": "User not found", "version": __version__}, status_code=404)
-        username = user_doc.get("username")
-        date_format = user_doc.get("date_format", "de")
-        library = get_user_library(username)
-        # How many latest releases to show (user preference).
-        try:
-            num_latest = int(user_doc.get('latest_count') or 4)
-        except Exception:
-            num_latest = 4
-        num_latest = max(1, min(24, num_latest))
-
-        from datetime import datetime, timezone
-
-        def _parse_date(s):
-            try:
-                return datetime.fromisoformat((s or "").split("T")[0]).replace(tzinfo=timezone.utc)
-            except Exception:
-                return None
-
-        def _format_dt(dt: datetime | None):
-            if not dt:
-                return "—"
-            def pad(n):
-                return str(n).zfill(2)
-            if date_format == "de":
-                return f"{pad(dt.day)}.{pad(dt.month)}.{dt.year} {pad(dt.hour)}:{pad(dt.minute)}"
-            if date_format == "us":
-                return f"{pad(dt.month)}/{pad(dt.day)}/{dt.year} {pad(dt.hour)}:{pad(dt.minute)}"
-            return f"{dt.date().isoformat()} {pad(dt.hour)}:{pad(dt.minute)}"
-
-        def _format_d(dt: datetime | None):
-            if not dt:
-                return "—"
-            def pad(n):
-                return str(n).zfill(2)
-            if date_format == "de":
-                return f"{pad(dt.day)}.{pad(dt.month)}.{dt.year}"
-            if date_format == "us":
-                return f"{pad(dt.month)}/{pad(dt.day)}/{dt.year}"
-            return dt.date().isoformat()
-
-        def _format_runtime(val) -> str | None:
-            try:
-                m = int(val or 0)
-            except Exception:
-                return None
-            if m <= 0:
-                return None
-            h = m // 60
-            mins = m % 60
-            return f"{h}h {mins}m" if h else f"{mins}m"
-
-        now = _dt.now(timezone.utc).replace(tzinfo=None)
-        upcoming_cards = []
-        latest_cards = []
-        series_rows = []
-        total_books = 0
-        last_refresh_dt = None
-
-        # Pre-load all series data to avoid N+1 queries in _get_publication_dt
-        series_asins = [getattr(it, 'asin', None) for it in library if getattr(it, 'asin', None)]
-        series_cache: dict = {}
-        if series_asins:
-            try:
-                # Load series with books data for publication date lookups
-                series_docs = get_series_collection().find(
-                    {"_id": {"$in": series_asins}},
-                    {"books": 1, "publication_datetime": 1, "raw.publication_datetime": 1}
-                )
-                series_cache = {doc["_id"]: doc for doc in series_docs}
-            except Exception:
-                series_cache = {}
-
-        # Pre-load narrator warnings for all series
-        narrator_warnings_map: dict[str, list] = {}
-        if series_asins:
-            try:
-                # Use projection to only load necessary fields
-                docs = get_series_collection().find(
-                    {"_id": {"$in": series_asins}}, 
-                    {"narrator_warnings": 1}
-                )
-                narrator_warnings_map = {
-                    doc.get("_id"): doc.get("narrator_warnings", []) or []
-                    for doc in docs
-                    if isinstance(doc, dict)
-                }
-            except Exception:
-                narrator_warnings_map = {}
-
-        for it in library:
-            books = it.books if isinstance(it.books, list) else []
-            visible = visible_books(books)
-            total_books += len(visible)
-            if it.fetched_at:
-                dt = _parse_date(it.fetched_at)
-                if dt and (not last_refresh_dt or dt > last_refresh_dt):
-                    last_refresh_dt = dt
-            series_last_release = None
-            series_next_release = None
-            # Use the pre-loaded global series_cache instead of per-series cache
-            def _get_publication_dt_local(book):
-                return _get_publication_dt(book, series_asin=getattr(it, 'asin', None), series_cache=series_cache)
-            for b in visible:
-                rd = _get_publication_dt_local(b)
-                if not rd:
-                    continue
-                if rd <= now and (not series_last_release or rd > series_last_release):
-                    series_last_release = rd
-                if rd > now and (not series_next_release or rd < series_next_release):
-                    series_next_release = rd
-                book_url = getattr(b, "url", None)
-                if not book_url and getattr(b, "asin", None):
-                    book_url = f"https://www.audible.com/pd/{getattr(b, 'asin', '')}"
-                if rd > now:
-                    days = (rd - now).days + (1 if (rd - now).seconds > 0 else 0)
-                    runtime_str = _format_runtime(getattr(b, "runtime", None))
-                    upcoming_cards.append({
-                        "title": getattr(b, "title", None) or it.title,
-                        "series": it.title,
-                        "narrators": getattr(b, "narrators", None) or "",
-                        "runtime": getattr(b, "runtime", None) or "",
-                        "runtime_str": runtime_str,
-                        "release_dt_iso": rd.isoformat() + 'Z',
-                        "release_dt": rd,
-                        "release_str": _format_d(rd),
-                        "days_left": days,
-                        "image": getattr(b, "image", None),
-                        "url": book_url,
-                    })
-                else:
-                    days_ago = (now - rd).days
-                    runtime_str = _format_runtime(getattr(b, "runtime", None))
-                    latest_cards.append({
-                        "title": getattr(b, "title", None) or it.title,
-                        "series": it.title,
-                        "narrators": getattr(b, "narrators", None) or "",
-                        "release_dt_iso": rd.isoformat() + 'Z',
-                        "runtime": getattr(b, "runtime", None) or "",
-                        "runtime_str": runtime_str,
-                        "release_dt": rd,
-                        "release_str": _format_d(rd),
-                        "days_ago": days_ago,
-                        "image": getattr(b, "image", None),
-                        "url": book_url,
-                    })
-            narr_set = set()
-            runtime_mins = 0
-            for b in visible:
-                if getattr(b, "narrators", None):
-                    for n in str(getattr(b, "narrators", "")).split(","):
-                        n = n.strip()
-                        if n:
-                            narr_set.add(n)
-                try:
-                    runtime_mins += int(getattr(b, "runtime", None) or 0)
-                except Exception:
-                    pass
-            hours = runtime_mins // 60
-            mins = runtime_mins % 60
-            runtime_str = f"{hours}h {mins}m" if hours else f"{mins}m"
-            cover = None
-            for b in visible:
-                if getattr(b, "image", None):
-                    cover = getattr(b, "image", None)
-                    break
-            if not cover:
-                for b in books:
-                    if getattr(b, "image", None):
-                        cover = getattr(b, "image", None)
-                        break
-            last_release_str = _format_d(series_last_release)
-            last_release_ts = series_last_release.isoformat() if series_last_release else None
-            next_release_str = _format_d(series_next_release)
-            next_release_ts = series_next_release.isoformat() if series_next_release else None
-            series_rows.append({
-                "title": it.title,
-                "asin": it.asin,
-                "narrators": ", ".join(sorted(narr_set)),
-                "book_count": len(visible),
-                "runtime": runtime_str,
-                "cover": cover,
-                "last_release": last_release_str,
-                "last_release_ts": last_release_ts,
-                "next_release": next_release_str,
-                "next_release_ts": next_release_ts,
-                "duration_minutes": runtime_mins,
-                "url": it.url,
-            })
-
-        upcoming_cards.sort(key=lambda x: x["release_dt"])
-        latest_cards.sort(key=lambda x: x["release_dt"], reverse=True)
-        latest_cards = latest_cards[:num_latest]
-        series_rows.sort(key=lambda x: (x["title"] or ""))
-
-        # Narrator warnings already pre-loaded above
-        for row in series_rows:
-            row["narrator_warnings"] = narrator_warnings_map.get(row.get("asin")) or []
-
-        title_to_asin = {row.get("title"): row.get("asin") for row in series_rows if row.get("title")}
-
-        # Detect dramatized adaptations on frontpage cards (case-insensitive) so we can optionally hide warnings for them
-        import re
-        def _card_contains_dramatized(card):
-            for k in ("title", "series", "narrators"):
-                v = card.get(k)
-                if isinstance(v, str) and re.search(r"dramatized adaptation", v, re.IGNORECASE):
-                    return True
-            return False
-        dramatized_titles = set()
-        for card in upcoming_cards + latest_cards:
-            if _card_contains_dramatized(card):
-                dramatized_titles.add(card.get("title"))
-
-        hide_pref = bool(user_doc.get('hide_narrator_warnings_for_dramatized_adaptations', False))
-
-        for card in upcoming_cards:
-            series_asin = card.get("series_asin") or title_to_asin.get(card.get("series"))
-            card["series_asin"] = series_asin
-            base_flag = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
-            card["narrator_warning"] = base_flag and not (hide_pref and card.get("title") in dramatized_titles)
-        for card in latest_cards:
-            series_asin = card.get("series_asin") or title_to_asin.get(card.get("series"))
-            card["series_asin"] = series_asin
-            base_flag = bool(series_asin and card.get("title") in (narrator_warnings_map.get(series_asin) or []))
-            card["narrator_warning"] = base_flag and not (hide_pref and card.get("title") in dramatized_titles)
-
-        # Also filter series-level narrator_warnings displayed on the frontpage tooltips
-        if hide_pref and dramatized_titles:
-            for row in series_rows:
-                row["narrator_warnings"] = [t for t in (row.get("narrator_warnings") or []) if t not in dramatized_titles]
-
-        stats = {
-            "series_count": len(library),
-            "books_count": total_books,
-            "last_refresh": _format_dt(last_refresh_dt),
-            "slug": user_doc.get("frontpage_slug") or username,
-            "username": username,
-        }
-
         settings = settings_mod.load_settings()
-
         return templates.TemplateResponse(
-            "frontpage.html",
-            {
-                "request": request,
-                "settings": settings,
-                "base_path": "",
-                "public_nav": True,
-                "brand_title": "Audiobook Tracker",
-                "hide_nav": True,
-                "page_title": "Audiobook Tracker",
-                "main_class": "container-fluid px-3 px-sm-4",
-                "stats": stats,
-                "upcoming": upcoming_cards,
-                "latest": latest_cards,
-                "series": series_rows,
-                "version": __version__,
-                "show_narrator_warnings": user_doc.get("show_narrator_warnings", True),
-            },
+            "login.html",
+            {"request": request, "settings": settings, "error": "User not found", "version": __version__},
+            status_code=404,
         )
-
-    
 
     @app.get(_p("/series/{asin}"), response_class=HTMLResponse)
     async def view_series_page(request: Request, asin: str):
@@ -579,10 +343,37 @@ def create_app() -> FastAPI:
         settings = settings_mod.load_settings()
         return templates.TemplateResponse("logs.html", {"request": request, "user": user, "logs": logs, "settings": settings, "version": __version__})
 
+    async def _require_developer_docs(request: Request):
+        user = await get_admin_user(request)
+        if not getattr(settings_mod.load_settings(), "developer_mode", False):
+            raise HTTPException(status_code=404, detail="Not Found")
+        return user
+
+    @app.get(_p("/openapi.json"), include_in_schema=False)
+    async def openapi_schema(user=Depends(_require_developer_docs)):
+        return app.openapi()
+
+    @app.get(_p("/docs"), include_in_schema=False)
+    async def swagger_docs(user=Depends(_require_developer_docs)):
+        from fastapi.openapi.docs import get_swagger_ui_html
+        return get_swagger_ui_html(openapi_url=_p("/openapi.json"), title="Audiobook Tracker API")
+
+    @app.get(_p("/redoc"), include_in_schema=False)
+    async def redoc_docs(user=Depends(_require_developer_docs)):
+        from fastapi.openapi.docs import get_redoc_html
+        return get_redoc_html(openapi_url=_p("/openapi.json"), title="Audiobook Tracker API")
+
     @app.get("/metrics")
     async def metrics():
         series_count.set(get_series_collection().count_documents({}))
         user_count.set(get_users_collection().count_documents({}))
+        for gauge, thread in (
+            (worker_thread_up, worker._thread),
+            (scheduler_thread_up, worker._scheduler_thread),
+            (notifier_thread_up, worker._release_notifier_thread),
+        ):
+            if gauge is not None:
+                gauge.set(1 if thread is not None and thread.is_alive() else 0)
         return Response(generate_latest(), media_type="text/plain")
 
     app.include_router(api_router, prefix=_p("/api"))

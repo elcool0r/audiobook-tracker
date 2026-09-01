@@ -68,10 +68,20 @@ services:
     environment:
       MONGO_URI: mongodb://root:changeme123@mongo:27017
       MONGO_DB: audiobook_tracker
-      SECRET_KEY: supersecretkey123456789
+      # Generate with: openssl rand -hex 32
+      SECRET_KEY: replace-me-with-a-random-64-char-hex-string
+      # Required on first start; the app refuses to create an admin without them.
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: replace-me-with-a-strong-password
+    volumes:
+      - ./covers-data:/app/data/covers
     ports:
       - "8000:8000"
 ```
+
+> Change `SECRET_KEY`, `ADMIN_PASSWORD` and the MongoDB password before exposing
+> this to a network. `SECRET_KEY` signs session tokens; anyone who learns it can
+> impersonate any user.
 
 Then run:
 
@@ -100,6 +110,10 @@ Access the application:
    ```bash
    export MONGO_URI=mongodb://localhost:27017
    export MONGO_DB=audiobook_tracker
+   export SECRET_KEY=$(openssl rand -hex 32)
+   export ADMIN_USERNAME=admin
+   export ADMIN_PASSWORD=<a strong password>
+   export COVERS_DIR=./data/covers  # optional; this is the default
    ```
 
 4. Run the application:
@@ -111,9 +125,10 @@ Access the application:
 
 ### Admin Interface
 
-1. Navigate to `/config` and log in with admin credentials
-   - Default username: `admin`
-   - Default password: `admin`
+1. Navigate to `/config` and log in with the credentials you set in
+   `ADMIN_USERNAME` / `ADMIN_PASSWORD`. There is no default account: on first
+   start against an empty database the app creates exactly one admin from those
+   variables, and refuses to start if they are unset.
 2. Add users and configure their settings
 3. Import series by ASIN or search Audible
 4. Monitor background jobs for updates
@@ -151,13 +166,19 @@ Prometheus metrics are available at `/metrics`:
 # TYPE audible_api_calls_total counter
 audible_api_calls_total 42
 
-# HELP series_count Total number of series
-# TYPE series_count gauge
-series_count 15
+# HELP audiobook_series_total Total number of series
+# TYPE audiobook_series_total gauge
+audiobook_series_total 15
 
-# HELP user_count Total number of users
-# TYPE user_count gauge
-user_count 3
+# HELP audiobook_users_total Total number of users
+# TYPE audiobook_users_total gauge
+audiobook_users_total 3
+
+# Background thread liveness. These threads are not restarted automatically,
+# so a sustained 0 means refreshes or notifications have stopped.
+audiobook_worker_thread_up 1
+audiobook_scheduler_thread_up 1
+audiobook_notifier_thread_up 1
 ```
 
 ## Configuration
@@ -165,9 +186,21 @@ user_count 3
 ### Environment Variables
 
 - `MONGO_URI`: MongoDB connection string (default: mongodb://mongo:27017)
+- `COVERS_DIR`: Where downloaded book covers are cached on disk (default:
+  `<repo>/data/covers`, or `/app/data/covers` in the Docker image). Mount this
+  as a volume so covers survive a container recreate instead of being
+  re-downloaded from Audible.
 - `MONGO_DB`: Database name (default: audiobook_tracker)
-- `ADMIN_USERNAME`: Admin username (must be set explicitly; no insecure default)
-- `ADMIN_PASSWORD`: Admin password (must be set explicitly; no default, use a strong password)
+- `ADMIN_USERNAME`: Admin username. Required on first start, when the initial
+  admin account is created. Ignored afterwards.
+- `ADMIN_PASSWORD`: Admin password for that initial account. Required on first
+  start; use a strong value.
+- `SECRET_KEY`: Signs session tokens. Required. Generate with `openssl rand -hex 32`.
+- `FORWARDED_ALLOW_IPS`: Which proxy addresses may set `X-Forwarded-*`
+  (default `*`). Only safe when the app's port is reachable solely by your
+  reverse proxy; otherwise set it to the proxy's address.
+- `FORCE_SECURE_COOKIES`: Set to `1` when TLS terminates somewhere the forwarded
+  headers do not survive, so session cookies are still marked `Secure`.
 
 ### User Settings
 
